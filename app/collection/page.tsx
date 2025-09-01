@@ -7,7 +7,6 @@ import { chaosRunesAbi } from '@/lib/abi';
 
 const RUNES_ADDRESS = process.env.NEXT_PUBLIC_RUNES_ADDRESS as `0x${string}`;
 
-// This is now our single source of truth for what CAN exist.
 const ALL_RUNES_DATA = [
     { id: 0, name: "Rune of Flux", image: "/0.png", description: "Pulsates with unstable energy." },
     { id: 1, name: "Rune of Entropy", image: "/1.png", description: "Hums with cosmic decay." },
@@ -19,7 +18,6 @@ const ALL_RUNES_DATA = [
 export default function CollectionPage() {
     const { address } = useAccount();
     const publicClient = usePublicClient();
-    // This Set will store the IDs of the runes the user actually owns.
     const [ownedRuneIds, setOwnedRuneIds] = useState<Set<number>>(new Set());
     const [isLoading, setIsLoading] = useState(true);
 
@@ -31,7 +29,6 @@ export default function CollectionPage() {
             }
             setIsLoading(true);
             try {
-                // 1. Get the number of NFTs the user owns
                 const balance = await publicClient.readContract({
                     address: RUNES_ADDRESS,
                     abi: chaosRunesAbi,
@@ -41,34 +38,30 @@ export default function CollectionPage() {
 
                 if (Number(balance) === 0) {
                     setOwnedRuneIds(new Set());
+                    setIsLoading(false); // Important to stop loading here
                     return;
                 }
 
                 const ownedIds = new Set<number>();
-                const promises = [];
-
-                // 2. For each NFT, get its tokenId
+                
+                // --- THIS IS THE FIX ---
+                // We fetch token IDs one-by-one to avoid overwhelming the RPC node.
                 for (let i = 0; i < Number(balance); i++) {
-                    promises.push(publicClient.readContract({
+                    const tokenId = await publicClient.readContract({
                         address: RUNES_ADDRESS,
                         abi: chaosRunesAbi,
                         functionName: 'tokenOfOwnerByIndex',
                         args: [address, BigInt(i)]
-                    }));
-                }
-                
-                const tokenIds = await Promise.all(promises);
-
-                // 3. For each tokenId, figure out which rune it is (0-4) and add to our set
-                tokenIds.forEach(tokenId => {
+                    });
                     const runeType = Number(tokenId) % 5;
                     ownedIds.add(runeType);
-                });
+                }
 
                 setOwnedRuneIds(ownedIds);
 
             } catch (e) {
-                console.error("Failed to fetch runes:", e);
+                // This will now log the REAL error to your browser console for debugging
+                console.error("Failed to fetch runes from blockchain:", e); 
                 toast.error("Could not load your NFT collection from the blockchain.");
             } finally {
                 setIsLoading(false);
@@ -93,7 +86,8 @@ export default function CollectionPage() {
                     return (
                         <div 
                             key={rune.id} 
-                            className={`rounded-lg bg-white/5 p-4 ring-1 ring-white/10 text-center transition-all duration-300 ${isUnlocked ? 'opacity-100' : 'opacity-40 grayscale'}`}
+                            // --- THIS IS THE NEW STYLE ---
+                            className={`rounded-lg bg-white/5 p-4 ring-1 ring-white/10 text-center transition-all duration-500 ${isUnlocked ? 'filter-none' : 'grayscale brightness-50'}`}
                         >
                             <img src={rune.image} alt={rune.name} className="w-full h-auto rounded-md aspect-square bg-black/20" />
                             <p className="font-semibold mt-3 text-sm truncate" title={rune.name}>{rune.name}</p>
