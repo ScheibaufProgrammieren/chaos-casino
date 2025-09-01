@@ -46,7 +46,7 @@ export default function AnvilPage() {
   const [activeStrikes, setActiveStrikes] = useState<bigint[]>([]);
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [lastResult, setLastResult] = useState<ForgeResult | null>(null);
-  const [currentAction, setCurrentAction] = useState<{ type: 'striking' | 'resolving'; strikeId?: bigint } | null>(null);
+  const [currentAction, setCurrentAction] = useState<{ type: 'striking' | 'resolving'; strikeId?: bigint; toastId?: string | number } | null>(null);
   const [isRevealing, setIsRevealing] = useState<boolean>(false);
 
   const { data: coins, refetch: refetchCoins } = useReadContract({ address: HUB_ADDRESS, abi: chaosCoinAbi, functionName: 'getCoins', args: [address ?? ZERO_ADDRESS], query: { enabled: !!address }, });
@@ -56,35 +56,22 @@ export default function AnvilPage() {
   const hasEnoughCoins = coins ? coins >= 10 : false;
 
   useEffect(() => {
-    const loadState = async () => {
-        if (address) {
-            setIsLoading(true);
-            const storedStrikes = localStorage.getItem(`activeAnvilStrikes_${address}`);
-            setActiveStrikes(storedStrikes ? JSON.parse(storedStrikes, (key, value) => typeof value === 'string' && /^\d+n$/.test(value) ? BigInt(value.slice(0, -1)) : value) : []);
-            setIsLoading(false);
-        } else { setActiveStrikes([]); }
-    }
-    loadState();
+    if (address) {
+      setIsLoading(true);
+      const storedStrikes = localStorage.getItem(`activeAnvilStrikes_${address}`);
+      setActiveStrikes(storedStrikes ? JSON.parse(storedStrikes, (key, value) => typeof value === 'string' && /^\d+n$/.test(value) ? BigInt(value.slice(0, -1)) : value) : []);
+      setIsLoading(false);
+    } else { setActiveStrikes([]); }
   }, [address]);
 
   async function strikeAnvil() {
-    // DEBUG LOGS TO HELP YOU
-    console.log("Attempting to strike anvil...");
-    console.log("Is connected?", !!address);
-    console.log("Has enough coins?", hasEnoughCoins, `(needs 10, has ${coins?.toString()})`);
-    console.log("Is another action happening?", isConfirming || isRevealing);
-
-    if (!hasEnoughCoins) { 
-        toast.error('You need 10 coins to strike the anvil.'); 
-        return; 
-    }
-    setCurrentAction({ type: 'striking' });
+    if (!hasEnoughCoins) { toast.error('You need 10 coins to strike the anvil.'); return; }
     const toastId = toast.loading('Sending transaction to your wallet...');
+    setCurrentAction({ type: 'striking', toastId });
     try { 
       await writeContractAsync({ address: ANVIL_ADDRESS, abi: aethericAnvilAbi, functionName: 'strikeAnvil' }); 
       toast.loading('Waiting for confirmation...', { id: toastId }); 
-    } 
-    catch (e) { 
+    } catch (e) { 
         console.error("Strike Anvil transaction failed:", e);
         toast.error('Transaction rejected.', { id: toastId }); 
         setCurrentAction(null); 
@@ -92,8 +79,8 @@ export default function AnvilPage() {
   }
 
   async function resolveForge(strikeId: bigint) {
-    setCurrentAction({ type: 'resolving', strikeId });
     const toastId = toast.loading(`Revealing the outcome of Forge #${strikeId.toString()}...`);
+    setCurrentAction({ type: 'resolving', strikeId, toastId });
     try { await writeContractAsync({ address: ANVIL_ADDRESS, abi: aethericAnvilAbi, functionName: 'resolveForge', args: [strikeId] }); } 
     catch (e) { 
         console.error("Resolve Forge transaction failed:", e);
@@ -104,53 +91,63 @@ export default function AnvilPage() {
 
   useEffect(() => {
     const handleConfirmation = async () => {
-      if (isConfirmed && receipt && currentAction && address) {
-        toast.dismiss();
-        resetWriteContract();
-        await refetchCoins();
+      if (!isConfirmed || !receipt || !currentAction || !address) return;
+      
+      console.log("Transaction confirmed! Receipt:", receipt);
+      const toastId = currentAction.toastId;
 
-        if (currentAction.type === 'striking') {
-          let struckEvent;
-          for (const log of receipt.logs) { try { const event = decodeEventLog({ abi: aethericAnvilAbi, ...log }); if (event.eventName === 'AnvilStruck') { struckEvent = event; break; } } catch {} }
-          if (struckEvent) {
-            const { strikeId } = struckEvent.args;
-            const updatedStrikes = [...activeStrikes, strikeId];
-            setActiveStrikes(updatedStrikes);
-            localStorage.setItem(`activeAnvilStrikes_${address}`, JSON.stringify(updatedStrikes, (key, value) => typeof value === 'bigint' ? value.toString() + 'n' : value));
-            toast.success(`Strike #${strikeId.toString()} is ready to be resolved!`);
-          }
-        }
+      resetWriteContract();
+      await refetchCoins();
 
-        if (currentAction.type === 'resolving') {
-          const resolvedStrikeId = currentAction.strikeId;
-          const updatedStrikes = activeStrikes.filter(id => id !== resolvedStrikeId);
+      if (currentAction.type === 'striking') {
+        let struckEvent;
+        for (const log of receipt.logs) { try { const event = decodeEventLog({ abi: aethericAnvilAbi, ...log }); if (event.eventName === 'AnvilStruck') { struckEvent = event; break; } } catch {} }
+        if (struckEvent) {
+          const { strikeId } = struckEvent.args;
+          const updatedStrikes = [...activeStrikes, strikeId];
           setActiveStrikes(updatedStrikes);
           localStorage.setItem(`activeAnvilStrikes_${address}`, JSON.stringify(updatedStrikes, (key, value) => typeof value === 'bigint' ? value.toString() + 'n' : value));
-          
-          let settledEvent;
-          for (const log of receipt.logs) { try { const event = decodeEventLog({ abi: aethericAnvilAbi, ...log }); if (event.eventName === 'ForgeSettled') { settledEvent = event; break; } } catch {} }
-          if (settledEvent) {
-            const { outcome, pointsWon, tokenId } = settledEvent.args;
-            if (outcome === 'Rune Spark' || outcome === 'Genesis Forge') {
-                const randomVal = Number(tokenId) % 5;
-                const runeData = RUNE_DATA[randomVal] || RUNE_DATA[0];
-                setLastResult({ outcome, pointsWon, tokenId, name: runeData.name, image: runeData.image });
-                toast.success(`LEGENDARY FORGE! You minted the ${runeData.name}!`);
-            } else {
-                setLastResult({ outcome, pointsWon, tokenId });
-                if (pointsWon > 0) { toast.info(`Success! You forged ${pointsWon.toString()} points.`); }
-                else { toast.error('Fizzle... the forge was unstable.'); }
-            }
-            setIsRevealing(true);
-          }
+          toast.success(`Strike #${strikeId.toString()} is ready to be resolved!`, { id: toastId });
+        } else {
+            toast.error("Something went wrong with the strike. Please try again.", { id: toastId });
         }
-        setCurrentAction(null);
       }
+
+      if (currentAction.type === 'resolving') {
+        const resolvedStrikeId = currentAction.strikeId!;
+        const updatedStrikes = activeStrikes.filter(id => id !== resolvedStrikeId);
+        setActiveStrikes(updatedStrikes);
+        localStorage.setItem(`activeAnvilStrikes_${address}`, JSON.stringify(updatedStrikes, (key, value) => typeof value === 'bigint' ? value.toString() + 'n' : value));
+        
+        let settledEvent;
+        for (const log of receipt.logs) { try { const event = decodeEventLog({ abi: aethericAnvilAbi, ...log }); if (event.eventName === 'ForgeSettled') { settledEvent = event; break; } } catch {} }
+        
+        console.log("Was ForgeSettled event found?", !!settledEvent);
+
+        if (settledEvent) {
+          const { outcome, pointsWon, tokenId } = settledEvent.args;
+          if (outcome === 'Rune Spark' || outcome === 'Genesis Forge') {
+              const randomVal = Number(tokenId) % 5;
+              const runeData = RUNE_DATA[randomVal] || RUNE_DATA[0];
+              setLastResult({ outcome, pointsWon, tokenId, name: runeData.name, image: runeData.image });
+              toast.success(`LEGENDARY FORGE! You minted the ${runeData.name}!`, { id: toastId });
+          } else {
+              setLastResult({ outcome, pointsWon, tokenId });
+              if (pointsWon > 0) { toast.info(`Success! You forged ${pointsWon.toString()} points.`, { id: toastId }); }
+              else { toast.error('Fizzle... the forge was unstable.', { id: toastId }); }
+          }
+          setIsRevealing(true);
+        } else {
+            // THIS IS THE NEW FALLBACK
+            toast.success("Forge resolved! Check your collection to see the results.", { id: toastId });
+        }
+      }
+      setCurrentAction(null);
     };
     handleConfirmation();
-  }, [isConfirmed, receipt, currentAction, address, activeStrikes, refetchCoins, resetWriteContract]);
+  }, [isConfirmed, receipt]); // Simplified dependency array to avoid re-runs
 
-  const isActionDisabled = isConfirming || isRevealing;
+  const isActionDisabled = isConfirming || !!currentAction;
 
   return (
     <main className="mx-auto max-w-7xl px-6 py-12">
@@ -175,7 +172,7 @@ export default function AnvilPage() {
           <div className="mt-6 max-w-md mx-auto space-y-3">
             {isLoading && <p className="text-center text-sm text-white/50">Loading...</p>}
             {!isLoading && activeStrikes.length === 0 && <p className="text-center text-sm text-white/50">You have no pending forges.</p>}
-            {activeStrikes.map(strikeId => ( <div key={strikeId.toString()} className="flex items-center justify-between rounded-lg bg-white/5 p-4 ring-1 ring-white/10"> <p className="font-semibold">Forge #{strikeId.toString()}</p> <button onClick={() => resolveForge(strikeId)} disabled={isActionDisabled} className="rounded-md bg-emerald-500/80 px-4 py-2 font-semibold text-black transition hover:bg-emerald-500 disabled:opacity-50">{currentAction?.type === 'resolving' ? '...' : 'Resolve'}</button></div> ))}
+            {activeStrikes.map(strikeId => ( <div key={strikeId.toString()} className="flex items-center justify-between rounded-lg bg-white/5 p-4 ring-1 ring-white/10"> <p className="font-semibold">Forge #{strikeId.toString()}</p> <button onClick={() => resolveForge(strikeId)} disabled={isActionDisabled} className="rounded-md bg-emerald-500/80 px-4 py-2 font-semibold text-black transition hover:bg-emerald-500 disabled:opacity-50">{currentAction?.type === 'resolving' && currentAction?.strikeId === strikeId ? '...' : 'Resolve'}</button></div> ))}
           </div>
       </div>
        <div className="mt-16 text-center">
