@@ -28,6 +28,8 @@ export default function CollectionPage() {
                 return;
             }
             setIsLoading(true);
+            setOwnedRuneIds(new Set()); // Reset on every fetch
+
             try {
                 const balance = await publicClient.readContract({
                     address: RUNES_ADDRESS,
@@ -36,33 +38,42 @@ export default function CollectionPage() {
                     args: [address]
                 });
 
-                if (Number(balance) === 0) {
-                    setOwnedRuneIds(new Set());
-                    setIsLoading(false); // Important to stop loading here
+                const balanceNumber = Number(balance);
+                console.log(`Smart contract reports user owns ${balanceNumber} NFTs.`);
+
+                if (balanceNumber === 0) {
+                    setIsLoading(false);
                     return;
                 }
 
                 const ownedIds = new Set<number>();
                 
-                // --- THIS IS THE FIX ---
-                // We fetch token IDs one-by-one to avoid overwhelming the RPC node.
-                for (let i = 0; i < Number(balance); i++) {
-                    const tokenId = await publicClient.readContract({
-                        address: RUNES_ADDRESS,
-                        abi: chaosRunesAbi,
-                        functionName: 'tokenOfOwnerByIndex',
-                        args: [address, BigInt(i)]
-                    });
-                    const runeType = Number(tokenId) % 5;
-                    ownedIds.add(runeType);
+                // --- THIS IS THE NEW ROBUST LOGIC ---
+                // We fetch token IDs one-by-one and wrap each call in a try/catch
+                // to handle potential reverts from the smart contract.
+                for (let i = 0; i < balanceNumber; i++) {
+                    try {
+                        const tokenId = await publicClient.readContract({
+                            address: RUNES_ADDRESS,
+                            abi: chaosRunesAbi,
+                            functionName: 'tokenOfOwnerByIndex',
+                            args: [address, BigInt(i)]
+                        });
+                        const runeType = Number(tokenId) % 5;
+                        ownedIds.add(runeType);
+                        console.log(`Successfully fetched token at index ${i}, it is rune type ${runeType}`);
+                    } catch (error) {
+                        // This will now catch the revert for a single index and continue
+                        console.warn(`Contract reverted for index ${i}. Skipping.`, error);
+                    }
                 }
 
                 setOwnedRuneIds(ownedIds);
 
             } catch (e) {
-                // This will now log the REAL error to your browser console for debugging
-                console.error("Failed to fetch runes from blockchain:", e); 
-                toast.error("Could not load your NFT collection from the blockchain.");
+                // This will catch bigger errors, like if the whole connection fails
+                console.error("A critical error occurred while fetching runes:", e); 
+                toast.error("Could not connect to the blockchain to load collection.");
             } finally {
                 setIsLoading(false);
             }
@@ -86,7 +97,6 @@ export default function CollectionPage() {
                     return (
                         <div 
                             key={rune.id} 
-                            // --- THIS IS THE NEW STYLE ---
                             className={`rounded-lg bg-white/5 p-4 ring-1 ring-white/10 text-center transition-all duration-500 ${isUnlocked ? 'filter-none' : 'grayscale brightness-50'}`}
                         >
                             <img src={rune.image} alt={rune.name} className="w-full h-auto rounded-md aspect-square bg-black/20" />
