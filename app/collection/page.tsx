@@ -28,50 +28,53 @@ export default function CollectionPage() {
                 return;
             }
             setIsLoading(true);
-            setOwnedRuneIds(new Set()); // Reset on every fetch
+            setOwnedRuneIds(new Set()); 
 
             try {
-                const balance = await publicClient.readContract({
+                // STEP 1: Get the total number of NFTs ever minted.
+                const totalSupply = await publicClient.readContract({
                     address: RUNES_ADDRESS,
                     abi: chaosRunesAbi,
-                    functionName: 'balanceOf',
-                    args: [address]
+                    functionName: 'totalSupply',
                 });
+                
+                const totalSupplyNumber = Number(totalSupply);
+                console.log(`Total supply of Runes is ${totalSupplyNumber}. Now checking ownership of each one...`);
 
-                const balanceNumber = Number(balance);
-                console.log(`Smart contract reports user owns ${balanceNumber} NFTs.`);
-
-                if (balanceNumber === 0) {
+                if (totalSupplyNumber === 0) {
                     setIsLoading(false);
                     return;
                 }
 
                 const ownedIds = new Set<number>();
-                
-                // --- THIS IS THE NEW ROBUST LOGIC ---
-                // We fetch token IDs one-by-one and wrap each call in a try/catch
-                // to handle potential reverts from the smart contract.
-                for (let i = 0; i < balanceNumber; i++) {
-                    try {
-                        const tokenId = await publicClient.readContract({
+                const promises = [];
+
+                // STEP 2: Create a list of checks. For each NFT, ask who its owner is.
+                for (let i = 0; i < totalSupplyNumber; i++) {
+                    promises.push(
+                        publicClient.readContract({
                             address: RUNES_ADDRESS,
                             abi: chaosRunesAbi,
-                            functionName: 'tokenOfOwnerByIndex',
-                            args: [address, BigInt(i)]
-                        });
-                        const runeType = Number(tokenId) % 5;
+                            functionName: 'ownerOf',
+                            args: [BigInt(i)]
+                        }).then(owner => ({ tokenId: i, owner }))
+                    );
+                }
+                
+                // STEP 3: Run all checks and filter for the ones that belong to our user.
+                const results = await Promise.all(promises);
+                
+                for (const result of results) {
+                    if (result.owner.toLowerCase() === address.toLowerCase()) {
+                        const runeType = result.tokenId % 5;
                         ownedIds.add(runeType);
-                        console.log(`Successfully fetched token at index ${i}, it is rune type ${runeType}`);
-                    } catch (error) {
-                        // This will now catch the revert for a single index and continue
-                        console.warn(`Contract reverted for index ${i}. Skipping.`, error);
+                        console.log(`User owns tokenId ${result.tokenId} (Rune Type ${runeType})`);
                     }
                 }
-
+                
                 setOwnedRuneIds(ownedIds);
 
             } catch (e) {
-                // This will catch bigger errors, like if the whole connection fails
                 console.error("A critical error occurred while fetching runes:", e); 
                 toast.error("Could not connect to the blockchain to load collection.");
             } finally {
