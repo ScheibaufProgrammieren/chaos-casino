@@ -31,52 +31,42 @@ export default function CollectionPage() {
             setOwnedRuneIds(new Set()); 
 
             try {
-                // STEP 1: Get the total number of NFTs ever minted.
-                const totalSupply = await publicClient.readContract({
+                // --- THIS IS THE FIX ---
+                // We can now go back to the efficient method because the new contract works!
+
+                // 1. Get the number of NFTs the user owns. This is now reliable.
+                const balance = await publicClient.readContract({
                     address: RUNES_ADDRESS,
                     abi: chaosRunesAbi,
-                    functionName: 'totalSupply',
+                    functionName: 'balanceOf',
+                    args: [address]
                 });
-                
-                const totalSupplyNumber = Number(totalSupply);
-                console.log(`Total supply of Runes is ${totalSupplyNumber}. Now checking ownership of each one...`);
 
-                if (totalSupplyNumber === 0) {
+                const balanceNumber = Number(balance);
+                if (balanceNumber === 0) {
                     setIsLoading(false);
                     return;
                 }
 
                 const ownedIds = new Set<number>();
-                const promises = [];
+                
+                // 2. For each NFT they own, get its ID. This function is now reliable.
+                for (let i = 0; i < balanceNumber; i++) {
+                    const tokenId = await publicClient.readContract({
+                        address: RUNES_ADDRESS,
+                        abi: chaosRunesAbi,
+                        functionName: 'tokenOfOwnerByIndex',
+                        args: [address, BigInt(i)]
+                    });
+                    const runeType = Number(tokenId) % 5;
+                    ownedIds.add(runeType);
+                }
 
-                // STEP 2: Create a list of checks. For each NFT, ask who its owner is.
-                for (let i = 0; i < totalSupplyNumber; i++) {
-                    promises.push(
-                        publicClient.readContract({
-                            address: RUNES_ADDRESS,
-                            abi: chaosRunesAbi,
-                            functionName: 'ownerOf',
-                            args: [BigInt(i)]
-                        }).then(owner => ({ tokenId: i, owner }))
-                    );
-                }
-                
-                // STEP 3: Run all checks and filter for the ones that belong to our user.
-                const results = await Promise.all(promises);
-                
-                for (const result of results) {
-                    if (result.owner.toLowerCase() === address.toLowerCase()) {
-                        const runeType = result.tokenId % 5;
-                        ownedIds.add(runeType);
-                        console.log(`User owns tokenId ${result.tokenId} (Rune Type ${runeType})`);
-                    }
-                }
-                
                 setOwnedRuneIds(ownedIds);
 
             } catch (e) {
                 console.error("A critical error occurred while fetching runes:", e); 
-                toast.error("Could not connect to the blockchain to load collection.");
+                toast.error("Could not load your NFT collection from the blockchain.");
             } finally {
                 setIsLoading(false);
             }
