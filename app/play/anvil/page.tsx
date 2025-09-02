@@ -24,21 +24,79 @@ const RUNE_DATA: { [key: number]: { name: string, image: string, description: st
 
 type ForgeResult = { outcome: string; pointsWon: bigint; tokenId: bigint; image?: string; name?: string; };
 
-const AnvilVisual = ({ isForging, result }: { isForging: boolean; result: ForgeResult | null }) => {
-  const effect = useMemo(() => {
-    if (!result) return null;
-    if (result.outcome === 'Rune Spark' || result.outcome === 'Genesis Forge') return 'shadow-[0_0_80px_rgba(255,215,0,0.8)] bg-amber-500/30';
-    if (result.pointsWon > 0) return 'shadow-[0_0_60px_rgba(150,150,255,0.6)] bg-indigo-500/30';
-    return 'shadow-[0_0_40px_rgba(100,100,100,0.5)] bg-gray-500/30';
-  }, [result]);
-  return ( <div className="relative flex h-80 w-80 items-center justify-center"> <div className={`absolute inset-0 rounded-full transition-all duration-500 ${effect ?? ''}`} /> <div className="relative flex h-full w-full items-center justify-center rounded-full border border-white/10 bg-gray-900/50 shadow-[0_0_80px_rgba(255,150,50,0.1)]"> <div className="h-48 w-48 rounded-full bg-gray-800 ring-4 ring-gray-700" /> <div className="absolute text-6xl drop-shadow-[0_0_10px_rgba(255,150,50,0.8)]">🔥</div> {isForging && <div className="absolute inset-0 animate-pulse rounded-full bg-orange-500/20" />} </div> </div> );
+// --- THIS IS THE NEW VISUAL ---
+// Replaces the boring fire emoji with a sick lootbox visual
+const ForgeVisual = ({ isForging, result }: { isForging: boolean; result: ForgeResult | null }) => {
+    const isNftWin = result?.outcome === 'Rune Spark' || result?.outcome === 'Genesis Forge';
+    const isPointsWin = result?.pointsWon > 0 && !isNftWin;
+    const isFizzle = result && !isNftWin && !isPointsWin;
+
+    return (
+        <div className="relative flex h-80 w-80 items-center justify-center">
+            {/* The background glow */}
+            <div className={`absolute inset-0 rounded-full transition-all duration-500 ${isForging ? 'bg-orange-500/30 animate-pulse' : ''} ${result ? 'bg-indigo-500/30' : ''}`} />
+            
+            {/* The Box */}
+            <div className={`relative flex h-64 w-64 items-center justify-center rounded-2xl border border-white/10 bg-gray-900/50 shadow-lg transition-all duration-300 ${isForging ? 'animate-bounce' : ''}`}>
+                <div className="text-8xl">
+                    {result ? ' ' : '💎'}
+                </div>
+            </div>
+
+            {/* The Revealed Prize */}
+            <div className={`absolute transition-all duration-500 ${result ? 'opacity-100 scale-110' : 'opacity-0 scale-50'}`}>
+                {isNftWin && <img src={result.image} alt={result.name} className="h-72 w-72 object-contain" />}
+                {isPointsWin && <div className="text-9xl">🪙</div>}
+                {isFizzle && <div className="text-9xl">💨</div>}
+            </div>
+        </div>
+    );
 };
 
+
+// --- THIS IS THE NEW MODAL WITH THE SMART BUTTON ---
 const RevealModal = ({ result, onClose }: { result: ForgeResult | null; onClose: () => void }) => {
     if (!result) return null;
-    const isWin = result.pointsWon > 0 || result.outcome === 'Rune Spark' || result.outcome === 'Genesis Forge';
-    return ( <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm" onClick={onClose}> <div className="relative max-w-sm rounded-2xl bg-gray-900 p-6 ring-1 ring-white/10 animate-[fade-in-up_0.5s_ease-out]"> <h2 className="text-center text-2xl font-bold">{isWin ? 'Forge Successful!' : 'A Dud...'}</h2> <div className="mt-4 aspect-square w-full rounded-lg bg-black/30 p-4"> {result.image ? ( <img src={result.image} alt={result.name} className="w-full h-full object-contain" /> ) : ( <div className="flex items-center justify-center h-full text-4xl text-white/50">{isWin ? '💎' : '💨'}</div> )} </div> {result.name && <p className="mt-2 text-center font-semibold text-amber-300">{result.name}</p>} <p className="mt-1 text-center text-white/70">{isWin ? `You were awarded ${result.pointsWon.toString()} points.` : "No points were awarded."}</p> <Link href="/collection" onClick={onClose} className="btn-cta mt-6 text-center block">View Collection</Link> </div> </div> );
+    
+    const isNftWin = result.outcome === 'Rune Spark' || result.outcome === 'Genesis Forge';
+    const isPointsWin = result.pointsWon > 0;
+
+    return (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm" onClick={onClose}>
+            <div className="relative max-w-sm rounded-2xl bg-gray-900 p-6 ring-1 ring-white/10 animate-[fade-in-up_0.5s_ease-out]">
+                <h2 className="text-center text-2xl font-bold">{isPointsWin ? 'Forge Successful!' : 'A Dud...'}</h2>
+                
+                <div className="mt-4 aspect-square w-full rounded-lg bg-black/30 p-4">
+                    {result.image ? (
+                        <img src={result.image} alt={result.name} className="w-full h-full object-contain" />
+                    ) : (
+                        <div className="flex items-center justify-center h-full text-6xl text-white/50">
+                            {isPointsWin ? '🪙' : '💨'}
+                        </div>
+                    )}
+                </div>
+                
+                {result.name && <p className="mt-2 text-center font-semibold text-amber-300">{result.name}</p>}
+                
+                <p className="mt-1 text-center text-white/70">
+                    {isPointsWin ? `You were awarded ${result.pointsWon.toString()} points.` : "No points were awarded."}
+                </p>
+                
+                {/* --- THIS IS THE NEW CONDITIONAL BUTTON --- */}
+                {isNftWin ? (
+                    <Link href="/collection" onClick={onClose} className="btn-cta glow mt-6 text-center block">
+                        View My Collection
+                    </Link>
+                ) : (
+                    <button onClick={onClose} className="btn-cta mt-6">
+                        Forge Again
+                    </button>
+                )}
+            </div>
+        </div>
+    );
 };
+
 
 export default function AnvilPage() {
   const { address } = useAccount();
@@ -68,6 +126,7 @@ export default function AnvilPage() {
     if (!hasEnoughCoins) { toast.error('You need 10 coins to strike the anvil.'); return; }
     const toastId = toast.loading('Sending transaction to your wallet...');
     setCurrentAction({ type: 'striking', toastId });
+    setLastResult(null); // Reset the visual
     try { 
       await writeContractAsync({ address: ANVIL_ADDRESS, abi: aethericAnvilAbi, functionName: 'strikeAnvil' }); 
       toast.loading('Waiting for confirmation...', { id: toastId }); 
@@ -93,7 +152,6 @@ export default function AnvilPage() {
     const handleConfirmation = async () => {
       if (!isConfirmed || !receipt || !currentAction || !address) return;
       
-      console.log("Transaction confirmed! Receipt:", receipt);
       const toastId = currentAction.toastId;
 
       resetWriteContract();
@@ -122,8 +180,6 @@ export default function AnvilPage() {
         let settledEvent;
         for (const log of receipt.logs) { try { const event = decodeEventLog({ abi: aethericAnvilAbi, ...log }); if (event.eventName === 'ForgeSettled') { settledEvent = event; break; } } catch {} }
         
-        console.log("Was ForgeSettled event found?", !!settledEvent);
-
         if (settledEvent) {
           const { outcome, pointsWon, tokenId } = settledEvent.args;
           if (outcome === 'Rune Spark' || outcome === 'Genesis Forge') {
@@ -138,14 +194,13 @@ export default function AnvilPage() {
           }
           setIsRevealing(true);
         } else {
-            // THIS IS THE NEW FALLBACK
             toast.success("Forge resolved! Check your collection to see the results.", { id: toastId });
         }
       }
       setCurrentAction(null);
     };
     handleConfirmation();
-  }, [isConfirmed, receipt]); // Simplified dependency array to avoid re-runs
+  }, [isConfirmed, receipt]);
 
   const isActionDisabled = isConfirming || !!currentAction;
 
@@ -153,7 +208,9 @@ export default function AnvilPage() {
     <main className="mx-auto max-w-7xl px-6 py-12">
       <RevealModal result={isRevealing ? lastResult : null} onClose={() => setIsRevealing(false)} />
       <div className="grid grid-cols-1 items-center gap-12 lg:grid-cols-2">
-        <div className="flex items-center justify-center"><AnvilVisual isForging={isActionDisabled} result={lastResult} /></div>
+        <div className="flex items-center justify-center">
+            <ForgeVisual isForging={isActionDisabled} result={lastResult} />
+        </div>
         <div className="rounded-3xl border border-white/10 bg-gradient-to-br from-white/5 to-white/[0.02] p-8 ring-1 ring-white/5">
           <h1 className="text-3xl font-extrabold">Aetheric Anvil</h1>
           <p className="mt-2 text-white/60">Forge for glory. Spend 10 coins for a chance to mint a permanent, on-chain Chaos Rune NFT.</p>
