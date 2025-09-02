@@ -28,7 +28,7 @@ type ForgeResult = { outcome: string; pointsWon: bigint; tokenId: bigint; image?
 // Replaces the boring fire emoji with a sick lootbox visual
 const ForgeVisual = ({ isForging, result }: { isForging: boolean; result: ForgeResult | null }) => {
     const isNftWin = result?.outcome === 'Rune Spark' || result?.outcome === 'Genesis Forge';
-    const isPointsWin = result?.pointsWon > 0 && !isNftWin;
+    const isPointsWin  = result && result.pointsWon > 0 && !isNftWin;
     const isFizzle = result && !isNftWin && !isPointsWin;
 
     return (
