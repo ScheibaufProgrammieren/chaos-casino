@@ -48,7 +48,7 @@ export default function HomePage() {
   const isMounted = useMounted();
 
   return (
-    <main className="relative min-h-screen overflow-x-hidden text-white h-screen overflow-y-hidden">
+    <main className="relative min-h-screen overflow-x-hidden text-white">
       <div className="pointer-events-none absolute inset-0 -z-20">
         <div className="absolute -inset-[20%] animate-[spin_40s_linear_infinite] rounded-[9999px] bg-[conic-gradient(at_50%_50%,#4f46e5_0deg,#22c55e_120deg,#ec4899_240deg,#4f46e5_360deg)] opacity-30 blur-[100px]" />
         <div className="absolute left-[10%] top-[15%] h-56 w-56 animate-pulse rounded-full bg-fuchsia-500/20 blur-2xl" />
