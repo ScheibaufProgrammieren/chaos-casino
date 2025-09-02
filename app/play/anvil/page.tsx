@@ -23,34 +23,16 @@ const RUNE_DATA: { [key: number]: { name: string, image: string, description: st
 
 type ForgeResult = { outcome: string; pointsWon: bigint; tokenId: bigint; image?: string; name?: string; };
 
-// --- THIS IS THE NEW, SICK VISUAL COMPONENT ---
-const ForgeVisual = ({ isForging, result }: { isForging: boolean; result: ForgeResult | null }) => {
-    const isNftWin = result?.outcome === 'Rune Spark' || result?.outcome === 'Genesis Forge';
-    const isPointsWin = result && result.pointsWon > 0 && !isNftWin;
-    const isFizzle = result && !isNftWin && !isPointsWin;
-
-    return (
-        <div className="relative flex h-80 w-80 items-center justify-center">
-            {/* The background glow */}
-            <div className={`absolute inset-0 rounded-full transition-all duration-500 ${isForging ? 'bg-orange-500/30 animate-pulse' : ''} ${result ? 'bg-indigo-500/40' : ''}`} />
-            
-            {/* The Box itself. It becomes invisible when a result is ready. */}
-            <div className={`relative flex h-64 w-64 items-center justify-center rounded-2xl border border-white/10 bg-gray-900/50 shadow-lg transition-all duration-300 ${isForging ? 'animate-bounce' : ''} ${result ? 'opacity-0 scale-90' : 'opacity-100'}`}>
-                <div className="text-9xl animate-pulse">
-                    💎
-                </div>
-            </div>
-
-            {/* The Revealed Prize. It becomes visible when a result is ready. */}
-            <div className={`absolute transition-all duration-500 ease-out ${result ? 'opacity-100 scale-110' : 'opacity-0 scale-50'}`}>
-                {isNftWin && <img src={result.image} alt={result.name} className="h-72 w-72 object-contain drop-shadow-[0_0_20px_rgba(255,255,255,0.5)]" />}
-                {isPointsWin && <div className="text-9xl drop-shadow-lg">🪙</div>}
-                {isFizzle && <div className="text-9xl drop-shadow-lg">💨</div>}
-            </div>
-        </div>
-    );
+// --- THE FIRE SHIT IS BACK ---
+const AnvilVisual = ({ isForging, result }: { isForging: boolean; result: ForgeResult | null }) => {
+  const effect = useMemo(() => {
+    if (!result) return null;
+    if (result.outcome === 'Rune Spark' || result.outcome === 'Genesis Forge') return 'shadow-[0_0_80px_rgba(255,215,0,0.8)] bg-amber-500/30';
+    if (result.pointsWon > 0) return 'shadow-[0_0_60px_rgba(150,150,255,0.6)] bg-indigo-500/30';
+    return 'shadow-[0_0_40px_rgba(100,100,100,0.5)] bg-gray-500/30';
+  }, [result]);
+  return ( <div className="relative flex h-80 w-80 items-center justify-center"> <div className={`absolute inset-0 rounded-full transition-all duration-500 ${effect ?? ''}`} /> <div className="relative flex h-full w-full items-center justify-center rounded-full border border-white/10 bg-gray-900/50 shadow-[0_0_80px_rgba(255,150,50,0.1)]"> <div className="h-48 w-48 rounded-full bg-gray-800 ring-4 ring-gray-700" /> <div className="absolute text-6xl drop-shadow-[0_0_10px_rgba(255,150,50,0.8)]">🔥</div> {isForging && <div className="absolute inset-0 animate-pulse rounded-full bg-orange-500/20" />} </div> </div> );
 };
-
 
 const RevealModal = ({ result, onClose }: { result: ForgeResult | null; onClose: () => void }) => {
     if (!result) return null;
@@ -122,7 +104,7 @@ export default function AnvilPage() {
     if (!hasEnoughCoins) { toast.error('You need 10 coins to strike the anvil.'); return; }
     const toastId = toast.loading('Sending transaction to your wallet...');
     setCurrentAction({ type: 'striking', toastId });
-    setLastResult(null); // Reset the visual so you can forge again
+    setLastResult(null); 
     try { 
       await writeContractAsync({ address: ANVIL_ADDRESS, abi: aethericAnvilAbi, functionName: 'strikeAnvil' }); 
       toast.loading('Waiting for confirmation...', { id: toastId }); 
@@ -196,7 +178,7 @@ export default function AnvilPage() {
       setCurrentAction(null);
     };
     handleConfirmation();
-  }, [isConfirmed, receipt]);
+  }, [isConfirmed, receipt, activeStrikes, address, currentAction, refetchCoins, resetWriteContract]);
 
   const isActionDisabled = isConfirming || !!currentAction;
 
@@ -205,7 +187,7 @@ export default function AnvilPage() {
       <RevealModal result={isRevealing ? lastResult : null} onClose={() => setIsRevealing(false)} />
       <div className="grid grid-cols-1 items-center gap-12 lg:grid-cols-2">
         <div className="flex items-center justify-center">
-            <ForgeVisual isForging={isActionDisabled} result={lastResult} />
+            <AnvilVisual isForging={isActionDisabled} result={lastResult} />
         </div>
         <div className="rounded-3xl border border-white/10 bg-gradient-to-br from-white/5 to-white/[0.02] p-8 ring-1 ring-white/5">
           <h1 className="text-3xl font-extrabold">Aetheric Anvil</h1>
