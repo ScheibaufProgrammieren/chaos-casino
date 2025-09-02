@@ -9,80 +9,108 @@ import { chaosCoinAbi } from '@/lib/abi';
 const HUB_ADDRESS = process.env.NEXT_PUBLIC_HUB_ADDRESS as `0x${string}`;
 const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000' as const;
 
-export default function RedeemPage() {
-  const { isConnected, address } = useAccount();
-  const [amount, setAmount] = useState<string>('100');
-  const amountAsNumber = Number(amount) || 0;
+// --- THE PRIZE CATALOG ---
+const PRIZES = [
+    {
+        name: 'Diamond Hands NFT',
+        cost: 1000,
+        image: '/diamond-nft.png',
+        description: 'A symbol of your unwavering conviction. Purely for the flex.'
+    },
+    {
+        name: 'Chaos Chrono Watch',
+        cost: 5000,
+        image: '/rolex.png',
+        description: 'A timepiece that bends reality. They will know you are a winner.'
+    },
+    {
+        name: 'Hyper-Dimensional Lambo',
+        cost: 25000,
+        image: '/lambo.png',
+        description: 'Forget the moon. This is for cruising between galaxies.'
+    }
+];
 
-  const { data: points, refetch: refetchPoints } = useReadContract({
-    address: HUB_ADDRESS,
-    abi: chaosCoinAbi,
-    functionName: 'points',
-    args: [address ?? ZERO_ADDRESS],
-    query: { enabled: !!address },
-  });
+export default function RewardsPage() {
+    const { isConnected, address } = useAccount();
+    const [toastId, setToastId] = useState<string | number | undefined>(undefined);
 
-  const hasEnoughPoints = points ? points >= BigInt(amountAsNumber) : false;
-
-  const { writeContractAsync, data: hash, reset } = useWriteContract();
-  const { isLoading: isConfirming, isSuccess: isConfirmed } = useWaitForTransactionReceipt({ hash });
-  
-  async function handleRedeem() {
-    if (!isConnected) { toast.error('Please connect your wallet first.'); return; }
-    if (amountAsNumber <= 0) { toast.error('Please enter a valid amount.'); return; }
-    if (!hasEnoughPoints) { toast.error('You do not have enough points.'); return; }
-
-    const toastId = toast.loading('Sending transaction...');
-    try {
-      await writeContractAsync({
+    const { data: points } = useReadContract({
         address: HUB_ADDRESS,
         abi: chaosCoinAbi,
-        functionName: 'redeemPoints',
-        args: [BigInt(amountAsNumber)],
-      });
-      toast.loading('Waiting for confirmation...', { id: toastId });
-    } catch (e) {
-      toast.error('Transaction rejected.', { id: toastId });
+        functionName: 'points',
+        args: [address ?? ZERO_ADDRESS],
+        query: { enabled: !!address, refetchInterval: 5000 },
+    });
+
+    const { writeContractAsync, data: hash, reset } = useWriteContract();
+    const { isLoading: isConfirming, isSuccess: isConfirmed } = useWaitForTransactionReceipt({ hash });
+
+    async function handleRedeem(amount: number, prizeName: string) {
+        if (!isConnected || !points || BigInt(amount) > points) {
+            toast.error('You do not have enough points for this prize.');
+            return;
+        }
+
+        const id = toast.loading(`Redeeming points for a ${prizeName}...`);
+        setToastId(id);
+
+        try {
+            await writeContractAsync({
+                address: HUB_ADDRESS,
+                abi: chaosCoinAbi,
+                functionName: 'redeemPoints',
+                args: [BigInt(amount)],
+            });
+            toast.loading('Waiting for on-chain confirmation...', { id });
+        } catch (e) {
+            toast.error('Transaction rejected.', { id });
+        }
     }
-  }
-  
-  // --- THIS IS THE FIX ---
-  // We put the success logic in a useEffect so it only runs ONCE when isConfirmed changes to true.
-  useEffect(() => {
-    if (isConfirmed) {
-        toast.success('Points redeemed successfully!');
-        refetchPoints();
-        reset(); // Reset the transaction state
-    }
-  }, [isConfirmed]); // Dependency array ensures it only runs when isConfirmed changes
 
-  return (
-    <main className="mx-auto max-w-2xl px-6 py-12">
-      <div className="rounded-3xl border border-white/10 bg-gradient-to-br from-white/5 to-white/[0.02] p-8 ring-1 ring-white/5">
-        <h1 className="text-3xl font-extrabold text-center">Redeem Points</h1>
-        <p className="mt-2 text-center text-white/60">
-          Burn your hard-earned points. This is purely for flexing and leaderboards (for now).
-        </p>
+    useEffect(() => {
+        if (isConfirmed && toastId) {
+            toast.success('Redemption Successful! Your legend grows.', { id: toastId });
+            reset();
+            setToastId(undefined);
+            // We don't need to refetch points here, wagmi's cache will update automatically.
+        }
+    }, [isConfirmed, toastId, reset]);
 
-        <div className="mt-8">
-          <label htmlFor="amount" className="block text-sm font-medium text-white/80">Amount of Points to Redeem</label>
-          <div className="relative mt-2">
-            <input type="number" id="amount" value={amount} onChange={(e) => setAmount(e.target.value)} className="w-full rounded-xl border-white/10 bg-white/5 p-4 pr-24 text-2xl font-semibold outline-none ring-1 ring-inset ring-white/10 focus:ring-2 focus:ring-inset focus:ring-white" placeholder="0" min="1"/>
-            <div className="pointer-events-none absolute inset-y-0 right-0 flex items-center pr-4"><span className="text-xl text-white/40">🔥</span></div>
-          </div>
-        </div>
-        
-        <div className="mt-4 text-center text-sm text-white/70">
-          Your Points: {points ? points.toString() : '0'}
-        </div>
+    return (
+        <main className="mx-auto max-w-7xl px-6 py-12">
+            <div className="text-center">
+                <h1 className="text-4xl font-extrabold">The Rewards Vault</h1>
+                <p className="mt-2 text-white/60">Burn your points for ultimate status. This is the endgame.</p>
+                <div className="mt-4 text-lg text-white/80">
+                    Your Points Balance: <span className="font-bold text-indigo-400">{points ? points.toString() : '0'}</span>
+                </div>
+            </div>
 
-        <div className="mt-8">
-          <button onClick={handleRedeem} disabled={!isConnected || isConfirming || amountAsNumber <= 0 || !hasEnoughPoints} className="w-full rounded-xl bg-indigo-600 py-4 text-lg font-bold text-white shadow-[0_10px_40px_rgba(129,140,248,0.25)] transition hover:scale-105 hover:opacity-95 active:scale-100 disabled:cursor-not-allowed disabled:opacity-50">
-            {isConfirming ? 'Redeeming...' : `Redeem ${amountAsNumber} Points`}
-          </button>
-          {!isConnected && (<p className="mt-3 text-center text-xs text-amber-400/80">You must connect your wallet to redeem points.</p>)}
-        </div>
-      </div>
-    </main>
-  );
+            <div className="mt-10 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
+                {PRIZES.map((prize) => {
+                    const hasEnoughPoints = points ? points >= BigInt(prize.cost) : false;
+                    return (
+                        <div key={prize.name} className="flex flex-col rounded-2xl border border-white/10 bg-white/[0.02] p-6 text-center">
+                            <div className="flex-grow">
+                                <img src={prize.image} alt={prize.name} className="h-48 w-full object-contain" />
+                                <h2 className="mt-6 text-2xl font-bold">{prize.name}</h2>
+                                <p className="mt-2 text-sm text-white/60">{prize.description}</p>
+                            </div>
+                            <div className="mt-6">
+                                <p className="text-lg font-bold text-indigo-400">{prize.cost.toLocaleString()} Points</p>
+                                <button
+                                    onClick={() => handleRedeem(prize.cost, prize.name)}
+                                    disabled={!isConnected || !hasEnoughPoints || isConfirming}
+                                    className="btn-cta glow mt-4"
+                                >
+                                    {isConfirming ? 'Confirming...' : 'Redeem Now'}
+                                </button>
+                            </div>
+                        </div>
+                    );
+                })}
+            </div>
+        </main>
+    );
 }
