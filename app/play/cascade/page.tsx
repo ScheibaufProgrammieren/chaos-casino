@@ -125,7 +125,7 @@ export default function CascadePage() {
                     <div className="text-center">
                         <p className="text-sm text-white/70">Pending Winnings</p>
                         <p className="text-4xl font-extrabold text-amber-300 mt-1">{pendingWinnings ? formatUnits(pendingWinnings, 0) : '0'}</p>
-                        <button onClick={handleCollect} disabled={isActionDisabled || !pendingWinnings || pendingWinnings === 0n} className="btn-cta success mt-4">
+                        <button onClick={handleCollect} disabled={isActionDisabled || !pendingWinnings || pendingWinnings === BigInt(0)} className="btn-cta success mt-4">
                             {isCollecting ? 'Collecting...' : 'Collect Winnings'}
                         </button>
                     </div>
