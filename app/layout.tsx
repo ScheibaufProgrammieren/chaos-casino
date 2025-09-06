@@ -85,6 +85,7 @@ function Header() {
             {/* --- THIS IS THE FIX --- */}
             <Link href="/collection" className="hidden text-sm font-medium text-white/80 transition-colors hover:text-white sm:block">My Collection</Link>
             <Link href="/redeem" className="hidden text-sm font-medium text-white/80 transition-colors hover:text-white sm:block">Redeem</Link>
+            <Link href="/redeem" className="hidden text-sm font-medium text-white/80 transition-colors hover:text-white sm:block">Chaos Cascade</Link>
             <HeaderHUD />
         </nav>
       </div>
