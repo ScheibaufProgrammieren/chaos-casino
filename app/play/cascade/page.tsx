@@ -75,7 +75,7 @@ export default function CascadePage() {
             }
             if (dropEvent) {
                 const { pointsWon } = dropEvent.args;
-                if (pointsWon === 0n) {
+                if (pointsWon === BigInt(0)) {
                     toast.error('💥 CHAOS! Your pending winnings have been wiped!');
                 } else {
                     toast.success(`+${formatUnits(pointsWon, 0)} points added to your pot!`);
