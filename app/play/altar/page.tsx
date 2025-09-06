@@ -1,11 +1,10 @@
-// app/play/altar/page.tsx
 'use client';
 
 import { useState, useEffect, useMemo } from 'react';
 import { useAccount } from 'wagmi';
 import { useReadContract, useWriteContract, useWaitForTransactionReceipt } from 'wagmi';
 import { toast } from 'sonner';
-import { formatUnits, decodeEventLog, type Abi } from 'viem';
+import { formatUnits, decodeEventLog } from 'viem';
 
 import { chaosCoinAbi, chaosAltarAbi } from '@/lib/abi';
 
@@ -28,16 +27,22 @@ export default function AltarPage() {
   const [timeLeft, setTimeLeft] = useState<number>(0);
 
   const { data: coins, refetch: refetchCoins } = useReadContract({ address: HUB_ADDRESS, abi: chaosCoinAbi, functionName: 'getCoins', args: [address ?? ZERO_ADDRESS], query: { enabled: !!address, refetchInterval: 5000 }, });
-  const { data: altarTime, refetch: refetchAltarData } = useReadContract({ address: ALTAR_ADDRESS, abi: chaosAltarAbi, functionName: 'getTimeLeft', query: { refetchInterval: 30000 }, });
+  const { data: altarTime, refetch: refetchAltarData } = useReadContract({ address: ALTAR_ADDRESS, abi: chaosAltarAbi, functionName: 'getTimeLeft', query: { refetchInterval: 10000 }, });
   const { data: jackpot, refetch: refetchJackpot } = useReadContract({ address: ALTAR_ADDRESS, abi: chaosAltarAbi, functionName: 'altarEssence', query: { refetchInterval: 5000 } });
   const { data: harbinger, refetch: refetchHarbinger } = useReadContract({ address: ALTAR_ADDRESS, abi: chaosAltarAbi, functionName: 'currentHarbinger', query: { refetchInterval: 5000 } });
   
-  const { writeContractAsync, data: hash, reset: resetWriteContract } = useWriteContract();
-  const { isLoading: isConfirming, isSuccess: isConfirmed, data: receipt } = useWaitForTransactionReceipt({ hash });
+  // --- FIX #1: SEPARATE HOOKS FOR SEPARATE ACTIONS ---
+  const { writeContractAsync: channelAsync, data: channelHash, reset: resetChannel } = useWriteContract();
+  const { isLoading: isChannelConfirming, isSuccess: isChannelConfirmed, data: channelReceipt } = useWaitForTransactionReceipt({ hash: channelHash });
+
+  const { writeContractAsync: endRoundAsync, data: endRoundHash, reset: resetEndRound } = useWriteContract();
+  const { isLoading: isEndRoundConfirming, isSuccess: isEndRoundConfirmed } = useWaitForTransactionReceipt({ hash: endRoundHash });
+
 
   const channelAmountAsBigInt = BigInt(Number(channelAmount) || 0);
   const hasEnoughCoins = coins ? coins >= channelAmountAsBigInt : false;
   const isHarbinger = useMemo(() => address && harbinger && address.toLowerCase() === harbinger.toLowerCase(), [address, harbinger]);
+  const isRoundOver = timeLeft <= 0;
 
   useEffect(() => {
     if (altarTime) { setTimeLeft(Number(altarTime)); }
@@ -50,19 +55,30 @@ export default function AltarPage() {
     if (channelAmountAsBigInt < 5) { toast.error('You must channel at least 5 coins.'); return; }
     const toastId = toast.loading('Channeling energy to the Altar...');
     try {
-      await writeContractAsync({ address: ALTAR_ADDRESS, abi: chaosAltarAbi, functionName: 'channel', args: [channelAmountAsBigInt] });
+      await channelAsync({ address: ALTAR_ADDRESS, abi: chaosAltarAbi, functionName: 'channel', args: [channelAmountAsBigInt] });
       toast.loading('Waiting for the chaotic event...', { id: toastId });
     } catch { toast.error('Transaction rejected.', { id: toastId }); }
   }
+
+  // --- FIX #2: THE MISSING FUNCTION TO END THE ROUND ---
+  async function handleEndRound() {
+    const toastId = toast.loading('Ending the round and claiming rewards...');
+    try {
+        await endRoundAsync({ address: ALTAR_ADDRESS, abi: chaosAltarAbi, functionName: 'endRound' });
+        toast.loading('Waiting for confirmation...', { id: toastId });
+    } catch {
+        toast.error('Transaction rejected.', { id: toastId });
+    }
+  }
   
+  // Effect for when a CHANNEL transaction is confirmed
   useEffect(() => {
-    if (isConfirmed && receipt) {
+    if (isChannelConfirmed && channelReceipt) {
       toast.dismiss();
       toast.success('Channeling Confirmed!');
       
-      // --- POLISH: Parse the event to give the user specific feedback ---
       let chaoticEvent;
-      for (const log of receipt.logs) {
+      for (const log of channelReceipt.logs) {
         try { const event = decodeEventLog({ abi: chaosAltarAbi, ...log }); if (event.eventName === 'ChaoticEvent') { chaoticEvent = event; break; } } catch {}
       }
 
@@ -76,12 +92,29 @@ export default function AltarPage() {
               toast.info(`⚡️ Power Surge! Your channeled amount was doubled for dominance.`);
           }
       }
-
-      refetchCoins(); refetchAltarData(); refetchJackpot(); refetchHarbinger();
-      resetWriteContract();
+      refetchAll();
+      resetChannel();
     }
-  }, [isConfirmed, receipt, refetchCoins, refetchAltarData, refetchJackpot, refetchHarbinger, resetWriteContract]);
+  }, [isChannelConfirmed, channelReceipt]);
 
+  // --- FIX #3: EFFECT FOR WHEN THE END ROUND TX IS CONFIRMED ---
+  useEffect(() => {
+      if (isEndRoundConfirmed) {
+          toast.dismiss();
+          toast.success('Round has ended! A new ritual begins.');
+          refetchAll();
+          resetEndRound();
+      }
+  }, [isEndRoundConfirmed]);
+
+  function refetchAll() {
+      refetchCoins();
+      refetchAltarData();
+      refetchJackpot();
+      refetchHarbinger();
+  }
+
+  const isActionDisabled = isChannelConfirming || isEndRoundConfirming;
 
   return (
     <main className="mx-auto max-w-5xl px-6 py-12">
@@ -91,10 +124,9 @@ export default function AltarPage() {
       </div>
 
       <div className="mt-10 grid grid-cols-1 md:grid-cols-2 gap-6">
-        <div className={`flex flex-col items-center justify-center rounded-3xl border  p-8 text-center transition-all duration-500 ${isHarbinger ? 'border-purple-500/50' : 'border-amber-400/20'}`}>
+        <div className={`flex flex-col items-center justify-center rounded-3xl border p-8 text-center transition-all duration-500 ${isHarbinger ? 'border-purple-500/50' : 'border-amber-400/20'}`}>
           <p className={`text-sm font-semibold uppercase tracking-widest ${isHarbinger ? 'text-purple-400' : 'text-amber-400/80'}`}>Current Jackpot</p>
-          {/* --- POLISH: Added subtle pulse animation to jackpot --- */}
-          <p className={`mt-2 text-6xl font-extrabold animate-pulse ${isHarbinger ? 'text-purple-300' : 'text-amber-300'}`}>
+          <p className={`mt-2 text-6xl font-extrabold ${isHarbinger ? 'text-purple-300 animate-pulse' : 'text-amber-300'}`}>
             {jackpot ? formatUnits(jackpot, 0) : '0'}
           </p>
           <p className="text-xl text-white/70">Points</p>
@@ -106,30 +138,39 @@ export default function AltarPage() {
         </div>
       </div>
       
-      <div className="mt-6 rounded-3xl border border-white/10 bg-gradient-to-br from-white/5 to-white/[0.02] p-8">
-        <div className="grid grid-cols-1 md:grid-cols-[1fr,2fr] gap-8 items-center">
-           <div className="text-center md:text-left">
-              <h2 className="text-lg font-semibold">Current Harbinger</h2>
-              {/* --- POLISH: Visual indicator if YOU are the Harbinger --- */}
-              {isHarbinger && <p className="text-sm font-bold text-purple-400">👑 YOU ARE THE HARBINGER 👑</p>}
-              {harbinger && harbinger !== ZERO_ADDRESS && !isHarbinger && (
-                <p className="truncate text-sm text-purple-400" title={harbinger}>{`${harbinger.slice(0, 6)}...${harbinger.slice(-4)}`}</p>
-              )}
-              {!harbinger || harbinger === ZERO_ADDRESS && <p className="text-sm text-white/60">None - The throne is empty.</p>}
-           </div>
-            <div>
-              <h2 className="text-lg font-semibold text-white/80">Channel Coins to Gain Dominance</h2>
-              <div className="mt-2 flex gap-2">
-                <input type="number" value={channelAmount} onChange={(e) => setChannelAmount(e.target.value)} className="flex-grow rounded-xl border-white/10 bg-white/5 p-4 text-xl font-semibold outline-none ring-1 ring-inset ring-white/10 focus:ring-2 focus:ring-inset focus:ring-white" placeholder="Min 5" min="5"/>
-                <button onClick={handleChannel} disabled={isConfirming || !hasEnoughCoins || channelAmountAsBigInt < 5} className="w-48 rounded-xl bg-purple-600 px-6 py-4 text-lg font-bold text-white shadow-lg transition hover:scale-105 hover:bg-purple-500 active:scale-100 disabled:cursor-not-allowed disabled:bg-gray-600 disabled:opacity-50">
-                  {isConfirming ? '...' : 'Channel'}
-                </button>
-              </div>
+      {/* --- FIX #4: THE UI NOW CHANGES WHEN THE ROUND IS OVER --- */}
+      {isRoundOver ? (
+          <div className="mt-6 rounded-3xl border border-amber-400/20 bg-gradient-to-br from-amber-500/10 to-white/[0.02] p-8 text-center">
+              <h2 className="text-2xl font-bold text-amber-300">The Round Has Ended!</h2>
+              <p className="mt-2 text-white/70">The Harbinger claims the jackpot. Anyone can trigger the next round.</p>
+              <button onClick={handleEndRound} disabled={isActionDisabled} className="btn-cta glow mt-6 max-w-sm mx-auto">
+                  {isEndRoundConfirming ? 'Starting New Round...' : 'Start New Round'}
+              </button>
+          </div>
+      ) : (
+        <div className="mt-6 rounded-3xl border border-white/10 bg-gradient-to-br from-white/5 to-white/[0.02] p-8">
+            <div className="grid grid-cols-1 md:grid-cols-[1fr,2fr] gap-8 items-center">
+               <div className="text-center md:text-left">
+                  <h2 className="text-lg font-semibold">Current Harbinger</h2>
+                  {isHarbinger && <p className="text-sm font-bold text-purple-400">👑 YOU ARE THE HARBINGER 👑</p>}
+                  {harbinger && harbinger !== ZERO_ADDRESS && !isHarbinger && (
+                    <p className="truncate text-sm text-purple-400" title={harbinger}>{`${harbinger.slice(0, 6)}...${harbinger.slice(-4)}`}</p>
+                  )}
+                  {(!harbinger || harbinger === ZERO_ADDRESS) && <p className="text-sm text-white/60">None - The throne is empty.</p>}
+               </div>
+                <div>
+                  <h2 className="text-lg font-semibold text-white/80">Channel Coins to Gain Dominance</h2>
+                  <div className="mt-2 flex gap-2">
+                    <input type="number" value={channelAmount} onChange={(e) => setChannelAmount(e.target.value)} className="flex-grow rounded-xl border-white/10 bg-white/5 p-4 text-xl font-semibold outline-none ring-1 ring-inset ring-white/10 focus:ring-2 focus:ring-inset focus:ring-white" placeholder="Min 5" min="5"/>
+                    <button onClick={handleChannel} disabled={isActionDisabled || !hasEnoughCoins || channelAmountAsBigInt < 5} className="w-48 rounded-xl bg-purple-600 px-6 py-4 text-lg font-bold text-white shadow-lg transition hover:scale-105 hover:bg-purple-500 active:scale-100 disabled:cursor-not-allowed disabled:bg-gray-600 disabled:opacity-50">
+                      {isChannelConfirming ? '...' : 'Channel'}
+                    </button>
+                  </div>
+                </div>
             </div>
         </div>
-      </div>
+      )}
       
-      {/* --- POLISH: Added a (placeholder) recent events log --- */}
        <div className="mt-8">
         <h2 className="text-xl font-bold text-center">Recent Altar Events</h2>
         <div className="mt-4 rounded-lg border border-white/10 bg-black/20 p-4 text-center">
