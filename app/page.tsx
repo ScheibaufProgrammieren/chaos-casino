@@ -126,7 +126,7 @@ export default function HomePage() {
             />
           
             <GameCard
-              href="/play/cascade"
+              href="/play"
               title="Chaos Cascade"
               description="Risk it all in a chaotic cascade of chance. Watch the balls fall and pray they miss the void. Push your luck and collect your winnings before you lose it all."
               tag="🔥 NEW GAME 🔥"
