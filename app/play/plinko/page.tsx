@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useMemo, forwardRef, useImperativeHandle } from 'react';
 import { useAccount, useReadContract, useWriteContract, useWaitForTransactionReceipt } from 'wagmi';
 import { toast } from 'sonner';
 import { formatUnits, parseUnits } from 'viem';
@@ -16,7 +16,8 @@ const RISK_LEVELS = [
     { name: 'Chaos', multipliers: [100, 30, 5, 1, 0.5, 0.3, 0.2, 0, 0, 0, 0.2, 0.3, 0.5, 1, 5, 30, 100] },
 ];
 
-const PlinkoBoard = ({ riskLevel, onBallDrop }: { riskLevel: number, onBallDrop: () => number }) => {
+// --- THIS IS THE FIX: We use forwardRef to correctly handle the ref ---
+const PlinkoBoard = forwardRef(({ riskLevel, onBallDrop }: { riskLevel: number, onBallDrop: () => number }, ref) => {
     const rows = 16;
     const multipliers = RISK_LEVELS[riskLevel].multipliers;
     const [balls, setBalls] = useState<{ id: number; path: { x: number; y: number }[]; outcomeBin: number }[]>([]);
@@ -24,25 +25,29 @@ const PlinkoBoard = ({ riskLevel, onBallDrop }: { riskLevel: number, onBallDrop:
     const handleDrop = () => {
         const outcomeBin = onBallDrop();
         if (outcomeBin === -1) return;
-
         let path = [{ x: 50, y: 2 }];
         let currentPegIndex = 8;
         for (let i = 0; i < rows; i++) {
             let direction = Math.random() < 0.5 ? -1 : 1;
             const remainingRows = rows - i - 1;
-            const minPossibleEnd = currentPegIndex - remainingRows -1;
+            const minPossibleEnd = currentPegIndex - remainingRows - 1;
             const maxPossibleEnd = currentPegIndex + remainingRows;
             if (maxPossibleEnd < outcomeBin) direction = 1;
             else if (minPossibleEnd > outcomeBin) direction = -1;
-
             currentPegIndex += direction === 1 ? 1 : 0;
-            path.push({ x: (100 / (i + 2)) * currentPegIndex, y: 7 + i * 5.5 });
+            path.push({ x: (100 / (i + 3)) * currentPegIndex, y: 7 + i * 5.5 });
         }
         const finalX = (100 / multipliers.length) * (outcomeBin + 0.5);
         path.push({ x: finalX, y: 100 });
-        
         setBalls(prev => [...prev, { id: Date.now(), path, outcomeBin }]);
     };
+
+    // This exposes the handleDrop function to the parent component via the ref
+    useImperativeHandle(ref, () => ({
+        drop() {
+            handleDrop();
+        }
+    }));
     
     return (
         <div className="relative w-full aspect-square bg-gray-900/50 border border-white/10 rounded-2xl overflow-hidden p-4">
@@ -61,10 +66,10 @@ const PlinkoBoard = ({ riskLevel, onBallDrop }: { riskLevel: number, onBallDrop:
                     </div>
                 ))}
             </div>
-            <button onClick={handleDrop} id="plinko-drop-button" className="hidden">Drop</button>
         </div>
     );
-};
+});
+PlinkoBoard.displayName = "PlinkoBoard"; // Needed for ESLint
 
 const Ball = ({ path, onComplete }: { path: { x: number; y: number }[], onComplete: () => void }) => {
     const [position, setPosition] = useState(path[0]);
@@ -107,13 +112,11 @@ export default function PlinkoPage() {
     const [betAmount, setBetAmount] = useState<string>('1');
     const [riskLevel, setRiskLevel] = useState<number>(1);
     const [isModalOpen, setModalOpen] = useState<'deposit' | 'withdraw' | null>(null);
-    const dropButtonRef = useRef<HTMLButtonElement>(null);
+    const plinkoBoardRef = useRef<{ drop: () => void }>(null);
 
-    // BALANCES
     const { data: mainBalance, refetch: refetchMainBalance } = useReadContract({ address: HUB_ADDRESS, abi: chaosCoinAbi, functionName: 'getCoins', args: [address ?? ZERO_ADDRESS], query: { enabled: !!address } });
     const { data: onChainGameBalance, refetch: refetchGameBalance } = useReadContract({ address: PLINKO_ADDRESS, abi: chaosPlinkoAbi, functionName: 'gameBalances', args: [address ?? ZERO_ADDRESS], query: { enabled: !!address, refetchInterval: 5000 } });
     
-    // ON-CHAIN TRANSACTIONS
     const { writeContractAsync, data: hash, reset } = useWriteContract();
     const { isLoading: isTxLoading, isSuccess: isTxSuccess } = useWaitForTransactionReceipt({ hash });
 
@@ -132,12 +135,9 @@ export default function PlinkoPage() {
         } catch (e) { toast.error('Transaction rejected.'); }
     };
 
-    // INSTANT DROP LOGIC
     const handleInstantDrop = () => {
-        if (!dropButtonRef.current) return -1;
-        // This function now just returns a random bin for the animation.
-        // The actual balance update happens off-chain in a real app.
-        // For this hackathon, we'll simulate it.
+        // This is where you would normally call your backend for a signed result.
+        // For the hackathon, we simulate it client-side.
         return Math.floor(Math.random() * RISK_LEVELS[riskLevel].multipliers.length);
     };
 
@@ -150,6 +150,12 @@ export default function PlinkoPage() {
             reset();
         }
     }, [isTxSuccess, refetchMainBalance, refetchGameBalance, reset]);
+    
+    const betAmountAsBigInt = parseUnits(betAmount || '0', 0);
+    const hasEnoughInGame = useMemo(() => {
+        if (!onChainGameBalance) return false;
+        return onChainGameBalance >= betAmountAsBigInt;
+    }, [onChainGameBalance, betAmountAsBigInt]);
     
     return (
         <main className="mx-auto max-w-7xl px-6 py-12">
@@ -184,14 +190,12 @@ export default function PlinkoPage() {
                             <button onClick={() => setRiskLevel(2)} className={`choice ${riskLevel === 2 ? 'active' : ''}`}>Chaos</button>
                         </div>
                     </div>
-                    <button onClick={() => dropButtonRef.current?.click()} disabled={isTxLoading || (onChainGameBalance ?? BigInt(0)) < parseUnits(betAmount, 0)} className="btn-cta glow">
+                    <button onClick={() => plinkoBoardRef.current?.drop()} disabled={isTxLoading || !hasEnoughInGame} className="btn-cta glow">
                         Drop Ball
                     </button>
                 </div>
-
                 <div className="lg:col-span-2">
-                    {/* The Plinko Board now has the button inside it, which we trigger programmatically */}
-                    <PlinkoBoard ref={dropButtonRef} riskLevel={riskLevel} onBallDrop={handleInstantDrop} />
+                    <PlinkoBoard ref={plinkoBoardRef} riskLevel={riskLevel} onBallDrop={handleInstantDrop} />
                 </div>
             </div>
         </main>
