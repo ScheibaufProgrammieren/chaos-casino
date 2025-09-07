@@ -100,7 +100,7 @@ const DepositWithdrawModal = ({ mode, isOpen, onClose, onConfirm, balance, gameB
     const [amount, setAmount] = useState('');
     const title = mode === 'deposit' ? 'Deposit to Game' : 'Withdraw from Game';
     const maxAmount = mode === 'deposit' ? balance : gameBalance;
-    const amountAsBigInt = amount ? parseUnits(amount, 0) : 0n;
+    const amountAsBigInt  = amount  ? parseUnits(amount, 0)  : BigInt(0);
     
     return (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm" onClick={onClose}>
