@@ -1,13 +1,13 @@
 'use client';
 
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect } from 'react';
 import { useAccount, useReadContract, useWriteContract, useWaitForTransactionReceipt } from 'wagmi';
 import { toast } from 'sonner';
 import { decodeEventLog, formatUnits, parseUnits } from 'viem';
-import { chaosCoinAbi, chaosPlinkoAbi } from '@/lib/abi'; // Make sure chaosPlinkoAbi is in abi.ts
+import { chaosCoinAbi, chaosPlinkoAbi } from '@/lib/abi';
 
 const HUB_ADDRESS = process.env.NEXT_PUBLIC_HUB_ADDRESS as `0x${string}`;
-const PLINKO_ADDRESS = process.env.NEXT_PUBLIC_PLINKO_ADDRESS as `0x${string}`; // Make sure to name this correctly in Vercel
+const PLINKO_ADDRESS = process.env.NEXT_PUBLIC_PLINKO_ADDRESS as `0x${string}`;
 const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000' as const;
 
 const RISK_LEVELS = [
@@ -16,7 +16,6 @@ const RISK_LEVELS = [
     { name: 'Chaos', multipliers: [100, 30, 5, 1, 0.5, 0.3, 0.2, 0, 0, 0, 0.2, 0.3, 0.5, 1, 5, 30, 100] },
 ];
 
-// --- THE SICK NEW VISUAL COMPONENT ---
 const PlinkoBoard = ({ riskLevel, outcomeBin, onAnimationComplete }: { riskLevel: number, outcomeBin: number | null, onAnimationComplete: () => void }) => {
     const rows = 16;
     const multipliers = RISK_LEVELS[riskLevel].multipliers;
@@ -28,14 +27,13 @@ const PlinkoBoard = ({ riskLevel, outcomeBin, onAnimationComplete }: { riskLevel
 
         setIsAnimating(true);
         
-        let path: { x: number, y: number }[] = [{ x: 50, y: 2 }]; // Start above the top peg
+        let path: { x: number, y: number }[] = [{ x: 50, y: 2 }];
         let currentPegIndex = Math.floor(rows / 2);
 
         for (let i = 0; i < rows; i++) {
             const startX = 50 - (i * 2.5);
-            let direction = Math.random() < 0.5 ? -1 : 1; // -1 for left, 1 for right
+            let direction = Math.random() < 0.5 ? -1 : 1;
             
-            // Force direction if needed to stay on a valid path to the outcome
             const remainingRows = rows - i - 1;
             const minPossibleEnd = currentPegIndex - remainingRows;
             const maxPossibleEnd = currentPegIndex + remainingRows;
@@ -62,7 +60,7 @@ const PlinkoBoard = ({ riskLevel, outcomeBin, onAnimationComplete }: { riskLevel
             }, index * 150);
         });
 
-    }, [outcomeBin]);
+    }, [outcomeBin, isAnimating, onAnimationComplete, rows, multipliers.length]);
     
     return (
         <div className="relative w-full aspect-[4/3] bg-gray-900/50 border border-white/10 rounded-2xl overflow-hidden p-4">
@@ -100,7 +98,7 @@ const DepositWithdrawModal = ({ mode, isOpen, onClose, onConfirm, balance, gameB
     const [amount, setAmount] = useState('');
     const title = mode === 'deposit' ? 'Deposit to Game' : 'Withdraw from Game';
     const maxAmount = mode === 'deposit' ? balance : gameBalance;
-    const amountAsBigInt  = amount  ? parseUnits(amount, 0)  : BigInt(0);
+    const amountAsBigInt = amount ? parseUnits(amount, 0) : BigInt(0);
     
     return (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm" onClick={onClose}>
@@ -111,7 +109,8 @@ const DepositWithdrawModal = ({ mode, isOpen, onClose, onConfirm, balance, gameB
                     Game Balance: {formatUnits(gameBalance, 0)} Coins
                 </div>
                 <input type="number" value={amount} onChange={(e) => setAmount(e.target.value)} className="w-full mt-4 rounded-xl border-white/10 bg-white/5 p-4 text-xl font-semibold outline-none ring-1 ring-inset ring-white/10" placeholder="0"/>
-                <button onClick={() => onConfirm(amountAsBigInt)} disabled={!amount || amountAsBigInt === 0n || amountAsBigInt > maxAmount} className="btn-cta glow mt-6">Confirm {mode}</button>
+                {/* --- THIS IS THE FIX --- */}
+                <button onClick={() => onConfirm(amountAsBigInt)} disabled={!amount || amountAsBigInt === BigInt(0) || amountAsBigInt > maxAmount} className="btn-cta glow mt-6">Confirm {mode}</button>
             </div>
         </div>
     );
@@ -130,7 +129,8 @@ export default function PlinkoPage() {
     const { writeContractAsync, data: hash, reset } = useWriteContract();
     const { isLoading, isSuccess, data: receipt } = useWaitForTransactionReceipt({ hash });
 
-    const betAmountAsBigInt = betAmount ? parseUnits(betAmount, 0) : 0n;
+    // --- THIS IS THE FIX ---
+    const betAmountAsBigInt = betAmount ? parseUnits(betAmount, 0) : BigInt(0);
     const hasEnoughInGame = gameBalance ? gameBalance >= betAmountAsBigInt : false;
 
     async function handleTx(functionName: 'deposit' | 'withdraw' | 'dropBall', args: any[]) {
@@ -168,8 +168,8 @@ export default function PlinkoPage() {
             let dropEvent;
             for (const log of receipt.logs) { try { const event = decodeEventLog({ abi: chaosPlinkoAbi, ...log }); if (event.eventName === 'BallDropped') { dropEvent = event; break; } } catch {} }
             
-            if (dropEvent) {
-                setOutcomeBin(dropEvent.args.outcomeBin!);
+            if (dropEvent && dropEvent.args.outcomeBin !== undefined) {
+                setOutcomeBin(dropEvent.args.outcomeBin);
             }
             
             reset();
@@ -182,8 +182,9 @@ export default function PlinkoPage() {
                 isOpen={isModalOpen !== null}
                 mode={isModalOpen!}
                 onClose={() => setModalOpen(null)}
-                balance={mainBalance ?? 0n}
-                gameBalance={gameBalance ?? 0n}
+                // --- THIS IS THE FIX ---
+                balance={mainBalance ?? BigInt(0)}
+                gameBalance={gameBalance ?? BigInt(0)}
                 onConfirm={isModalOpen === 'deposit' ? handleDeposit : handleWithdraw}
             />
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-8 items-start">
@@ -194,7 +195,8 @@ export default function PlinkoPage() {
                     </div>
                     <div className="p-4 rounded-lg bg-black/20 text-center">
                         <p className="text-sm text-white/60">Game Balance</p>
-                        <p className="text-3xl font-bold">{formatUnits(gameBalance ?? 0n, 0)}</p>
+                        {/* --- THIS IS THE FIX --- */}
+                        <p className="text-3xl font-bold">{formatUnits(gameBalance ?? BigInt(0), 0)}</p>
                         <div className="grid grid-cols-2 gap-2 mt-3">
                             <button onClick={() => setModalOpen('deposit')} className="btn-ghost">Deposit</button>
                             <button onClick={() => setModalOpen('withdraw')} className="btn-ghost">Withdraw</button>
@@ -218,7 +220,21 @@ export default function PlinkoPage() {
                 </div>
 
                 <div className="lg:col-span-2">
-                    <PlinkoBoard riskLevel={riskLevel} outcomeBin={outcomeBin} onAnimationComplete={() => setOutcomeBin(null)} />
+                    <PlinkoBoard riskLevel={riskLevel} outcomeBin={outcomeBin} onAnimationComplete={() => {
+                        if(receipt) {
+                             let dropEvent;
+                            for (const log of receipt.logs) { try { const event = decodeEventLog({ abi: chaosPlinkoAbi, ...log }); if (event.eventName === 'BallDropped') { dropEvent = event; break; } } catch {} }
+                            if (dropEvent && dropEvent.args.coinsWon !== undefined) {
+                                const { coinsWon } = dropEvent.args;
+                                if (coinsWon === BigInt(0)) {
+                                    toast.error('💥 UNLUCKY! You hit a dead bin.');
+                                } else {
+                                    toast.success(`WIN! You won ${formatUnits(coinsWon, 0)} coins back!`);
+                                }
+                            }
+                        }
+                        setOutcomeBin(null);
+                    }} />
                 </div>
             </div>
         </main>
