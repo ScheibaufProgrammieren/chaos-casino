@@ -74,19 +74,18 @@ export default function CoinFlipPage() {
     }
   }
 
+  // --- THIS IS THE FINAL, BULLETPROOF HOOK ---
+  // It is the one and only BOSS of the page. It controls EVERYTHING after a transaction.
   useEffect(() => {
     if (isConfirmed && receipt && currentAction) {
         const handleConfirmation = async () => {
             toast.success('Transaction Confirmed!');
-            
-            // Refetch data BEFORE updating the UI to get the most recent state
-            const [ , newHasActiveBet, newPendingPoints] = await Promise.all([refetchCoins(), refetchActiveBet(), refetchPendingPoints()]);
 
             if (currentAction === 'placing_bet') {
-                setStep('flipping');
+                setStep('flipping'); // AUTOMATICALLY shows the "Flip Coin" button.
             } 
             else if (currentAction === 'claiming_points') {
-                resetGame();
+                resetGame(); // AUTOMATICALLY resets to the start.
             } 
             else if (currentAction === 'flipping_coin') {
                 let coinFlippedEvent;
@@ -94,30 +93,31 @@ export default function CoinFlipPage() {
 
                 if (coinFlippedEvent) {
                     const { win, resultHeads } = coinFlippedEvent.args;
-                    setLastFlipResult({ win });
+                    setLastFlipResult({ win }); // <-- Stores the TRUTH in our memory
                     setIsSpinning(true);
                     setTimeout(() => setCoinResult(resultHeads ? 'heads' : 'tails'), 100);
                     setTimeout(() => {
                         setIsSpinning(false);
                         setHapticResult(win ? 'win' : 'lose');
-                        setStep('finished');
+                        setStep('finished'); // AUTOMATICALLY shows the result buttons.
                     }, 1200);
                 } else {
                     toast.error("Could not determine flip result. Please refresh.");
                 }
             }
+            
+            await Promise.all([refetchCoins(), refetchActiveBet(), refetchPendingPoints()]);
             setCurrentAction(null);
             resetWriteContract();
         };
         handleConfirmation();
     }
-  }, [isConfirmed, receipt, currentAction, resetWriteContract, refetchCoins, refetchActiveBet, refetchPendingPoints]);
+  }, [isConfirmed, receipt, currentAction]);
   
+  // This hook is ONLY for syncing the UI on page load. It DOES NOT run during a transaction.
   useEffect(() => {
     if (isConfirming || currentAction) return;
 
-    // --- THIS IS THE FIX ---
-    // Use the actual pendingPoints value directly, not a stale variable
     if (pendingPoints && pendingPoints > BigInt(0)) {
         setStep('finished');
     } else if (hasActiveBet) {
