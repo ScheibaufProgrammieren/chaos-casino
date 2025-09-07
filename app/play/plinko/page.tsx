@@ -1,6 +1,7 @@
 'use client';
 
-import { useState, useEffect, useMemo, forwardRef, useImperativeHandle } from 'react';
+// --- THIS IS THE FIX ---
+import { useState, useEffect, useMemo, forwardRef, useImperativeHandle, useRef } from 'react';
 import { useAccount, useReadContract, useWriteContract, useWaitForTransactionReceipt } from 'wagmi';
 import { toast } from 'sonner';
 import { formatUnits, parseUnits } from 'viem';
@@ -16,7 +17,6 @@ const RISK_LEVELS = [
     { name: 'Chaos', multipliers: [100, 30, 5, 1, 0.5, 0.3, 0.2, 0, 0, 0, 0.2, 0.3, 0.5, 1, 5, 30, 100] },
 ];
 
-// --- THIS IS THE FIX: We use forwardRef to correctly handle the ref ---
 const PlinkoBoard = forwardRef(({ riskLevel, onBallDrop }: { riskLevel: number, onBallDrop: () => number }, ref) => {
     const rows = 16;
     const multipliers = RISK_LEVELS[riskLevel].multipliers;
@@ -42,7 +42,6 @@ const PlinkoBoard = forwardRef(({ riskLevel, onBallDrop }: { riskLevel: number, 
         setBalls(prev => [...prev, { id: Date.now(), path, outcomeBin }]);
     };
 
-    // This exposes the handleDrop function to the parent component via the ref
     useImperativeHandle(ref, () => ({
         drop() {
             handleDrop();
@@ -69,7 +68,7 @@ const PlinkoBoard = forwardRef(({ riskLevel, onBallDrop }: { riskLevel: number, 
         </div>
     );
 });
-PlinkoBoard.displayName = "PlinkoBoard"; // Needed for ESLint
+PlinkoBoard.displayName = "PlinkoBoard";
 
 const Ball = ({ path, onComplete }: { path: { x: number; y: number }[], onComplete: () => void }) => {
     const [position, setPosition] = useState(path[0]);
@@ -136,8 +135,6 @@ export default function PlinkoPage() {
     };
 
     const handleInstantDrop = () => {
-        // This is where you would normally call your backend for a signed result.
-        // For the hackathon, we simulate it client-side.
         return Math.floor(Math.random() * RISK_LEVELS[riskLevel].multipliers.length);
     };
 
