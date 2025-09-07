@@ -24,31 +24,31 @@ export default function CoinFlipPage() {
   const [hapticResult, setHapticResult] = useState<'win' | 'lose' | null>(null);
   const [currentAction, setCurrentAction] = useState<Action | null>(null);
 
-  // --- THIS IS THE FIX ---
-  // A new "memory" state to store the immediate, undeniable truth from the transaction.
+  // --- THIS IS THE "MEMORY" THAT STORES THE UNDENIABLE TRUTH ---
   const [lastFlipResult, setLastFlipResult] = useState<{ win: boolean } | null>(null);
 
-  const { data: coins, refetch: refetchCoins } = useReadContract({ address: HUB_ADDRESS, abi: chaosCoinAbi, functionName: 'getCoins', args: [address ?? ZERO_ADDRESS], query: { enabled: !!address }, });
-  const { data: hasActiveBet, refetch: refetchActiveBet } = useReadContract({ address: COINFLIP_ADDRESS, abi: coinFlipAbi, functionName: 'hasActiveBet', args: [address ?? ZERO_ADDRESS], query: { enabled: !!address }, });
-  const { data: pendingPoints, refetch: refetchPendingPoints } = useReadContract({ address: COINFLIP_ADDRESS, abi: coinFlipAbi, functionName: 'pendingPoints', args: [address ?? ZERO_ADDRESS], query: { enabled: !!address }, });
+  const { data: coins, refetch: refetchCoins } = useReadContract({ address: HUB_ADDRESS, abi: chaosCoinAbi, functionName: 'getCoins', args: [address ?? ZERO_ADDRESS], query: { enabled: !!address } });
+  const { data: hasActiveBet, refetch: refetchActiveBet } = useReadContract({ address: COINFLIP_ADDRESS, abi: coinFlipAbi, functionName: 'hasActiveBet', args: [address ?? ZERO_ADDRESS], query: { enabled: !!address } });
+  const { data: pendingPoints, refetch: refetchPendingPoints } = useReadContract({ address: COINFLIP_ADDRESS, abi: coinFlipAbi, functionName: 'pendingPoints', args: [address ?? ZERO_ADDRESS], query: { enabled: !!address } });
 
   const { writeContractAsync, data: hash, reset: resetWriteContract } = useWriteContract();
   const { isLoading: isConfirming, isSuccess: isConfirmed, data: receipt } = useWaitForTransactionReceipt({ hash });
   
   const hasEnoughCoins = useMemo(() => (coins ? coins >= BigInt(1) : false), [coins]);
-  // The UI will now check our new "memory" state, not just the slow blockchain data.
+  // The UI will now check our "memory" state, not just the slow blockchain data.
   const showClaimButton = useMemo(() => (pendingPoints && pendingPoints > BigInt(0)) || lastFlipResult?.win === true, [pendingPoints, lastFlipResult]);
 
   const resetGame = () => {
     setStep('choosing');
     setLastFlipResult(null);
     setCurrentAction(null);
+    setHapticResult(null);
   };
 
   async function placeBet() {
     if (!hasEnoughCoins) { toast.error('You need at least 1 coin to play.'); return; }
     setCurrentAction('placing_bet');
-    setLastFlipResult(null); // Clear previous results
+    setLastFlipResult(null);
     try { 
         await writeContractAsync({ address: COINFLIP_ADDRESS, abi: coinFlipAbi, functionName: 'placeBet', args: [guessHeads] }); 
     } catch (e) { 
@@ -77,35 +77,40 @@ export default function CoinFlipPage() {
     }
   }
 
+  // --- THIS IS THE FINAL, BULLETPROOF HOOK ---
+  // It is the one and only BOSS of the page. It controls EVERYTHING after a transaction.
   useEffect(() => {
     if (isConfirmed && receipt && currentAction) {
         const handleConfirmation = async () => {
+            toast.success('Transaction Confirmed!');
+
             if (currentAction === 'placing_bet') {
-                toast.success('Bet placed successfully!');
-                setStep('flipping');
-            } else if (currentAction === 'claiming_points') {
-                toast.success('Points claimed!');
-                resetGame();
-            } else if (currentAction === 'flipping_coin') {
+                setStep('flipping'); // AUTOMATICALLY shows the "Flip Coin" button.
+            } 
+            else if (currentAction === 'claiming_points') {
+                resetGame(); // AUTOMATICALLY resets to the start.
+            } 
+            else if (currentAction === 'flipping_coin') {
                 let coinFlippedEvent;
                 for (const log of receipt.logs) { try { const event = decodeEventLog({ abi: coinFlipAbi, ...log }); if (event.eventName === 'CoinFlipped') { coinFlippedEvent = event; break; } } catch {} }
 
                 if (coinFlippedEvent) {
                     const { win, resultHeads } = coinFlippedEvent.args;
-                    setLastFlipResult({ win }); // <-- Store the TRUTH in our memory
+                    setLastFlipResult({ win }); // <-- Stores the TRUTH in our memory
                     setIsSpinning(true);
                     setTimeout(() => setCoinResult(resultHeads ? 'heads' : 'tails'), 100);
                     setTimeout(() => {
                         setIsSpinning(false);
                         setHapticResult(win ? 'win' : 'lose');
-                        setStep('finished');
+                        setStep('finished'); // AUTOMATICALLY shows the result buttons.
                     }, 1200);
                 } else {
                     toast.error("Could not determine flip result. Please refresh.");
                 }
             }
-            // Refetch in the background, but the UI is already correct
-            Promise.all([refetchCoins(), refetchActiveBet(), refetchPendingPoints()]);
+            
+            // Refetch data in the background for the next turn, AFTER the UI is already fixed.
+            await Promise.all([refetchCoins(), refetchActiveBet(), refetchPendingPoints()]);
             setCurrentAction(null);
             resetWriteContract();
         };
@@ -114,28 +119,27 @@ export default function CoinFlipPage() {
   }, [isConfirmed, receipt, currentAction]);
   
   useEffect(() => {
-    if (isConfirming || currentAction) return;
-    setHapticResult(null);
-    if (pendingPoints && pendingPoints > BigInt(0)) {
+    if (isConfirming || currentAction) return; // DO NOTHING during a transaction.
+
+    if (hasPointsToClaim) {
         setStep('finished');
     } else if (hasActiveBet) {
         setStep('flipping');
     } else {
         setStep('choosing');
     }
-  }, [hasActiveBet, pendingPoints, isConfirming, currentAction]);
+  }, [hasActiveBet, hasPointsToClaim, isConfirming, currentAction]);
 
   const statusText = useMemo(() => {
-    const isActionActive = isConfirming || currentAction;
-    if (isActionActive) return 'Waiting for on-chain confirmation...';
+    if (isConfirming || currentAction) return 'Waiting for on-chain confirmation...';
     if (step === 'choosing') return 'Choose a side and place your bet.';
     if (step === 'flipping') return 'Your bet is locked. Flip the coin!';
     if (step === 'finished') {
-      if (showClaimButton) return `You won! Claim your ${Number(pendingPoints || 100)} points.`;
+      if (showClaimButton) return `You won! Claim your points.`;
       return 'Unlucky. Better luck next time!';
     }
     return 'Ready.';
-  }, [step, isConfirming, currentAction, showClaimButton, pendingPoints]);
+  }, [step, isConfirming, currentAction, showClaimButton]);
 
   const isButtonDisabled = isConfirming || !!currentAction;
 
@@ -165,7 +169,7 @@ export default function CoinFlipPage() {
             <div>
               {step === 'choosing' && <button onClick={placeBet} disabled={isButtonDisabled || !hasEnoughCoins} className="btn-cta">Place Bet (1 Coin)</button>}
               {step === 'flipping' && <button onClick={flipCoin} disabled={isButtonDisabled} className="btn-cta success">Flip the Coin</button>}
-              {step === 'finished' && ( <> {showClaimButton ? ( <button onClick={claim} disabled={isButtonDisabled} className="btn-cta glow">{`Claim Points`}</button> ) : ( <button onClick={resetGame} className="btn-cta">Play Again</button> )} </> )}
+              {step === 'finished' && ( <> {showClaimButton ? ( <button onClick={claim} disabled={isButtonDisabled} className="btn-cta glow">Claim Points</button> ) : ( <button onClick={resetGame} className="btn-cta">Play Again</button> )} </> )}
               {isButtonDisabled && <button disabled className="btn-cta animate-pulse">Waiting for Wallet...</button>}
             </div>
             <div className="rounded-lg border border-white/10 bg-white/5 p-3 text-center text-sm text-white/80">
