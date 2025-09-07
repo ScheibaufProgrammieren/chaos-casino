@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useRef, forwardRef, useImperativeHandle } from 'react';
+import { useState, useEffect, useMemo, useRef, forwardRef, useImperativeHandle } from 'react';
 import { useAccount, useReadContract, useWriteContract, useWaitForTransactionReceipt } from 'wagmi';
 import { toast } from 'sonner';
 import { formatUnits, parseUnits } from 'viem';
@@ -20,40 +20,33 @@ const RISK_LEVELS = [
 const PlinkoBoard = forwardRef(({ riskLevel, onBallDrop }: { riskLevel: number, onBallDrop: () => number }, ref) => {
     const rows = 16;
     const multipliers = RISK_LEVELS[riskLevel].multipliers;
-    const [balls, setBalls] = useState<{ id: number; path: { x: number; y: number }[]; outcomeBin: number }[]>([]);
+    const [balls, setBalls] = useState<{ id: number; path: { x: number; y: number }[] }[]>([]);
 
     useImperativeHandle(ref, () => ({
         drop() {
             const outcomeBin = onBallDrop();
             if (outcomeBin === -1) return;
 
-            let path: { x: number, y: number }[] = [{ x: 50, y: 2 }];
-            let currentPathX = 50;
+            let path = [{ x: 50, y: -2 }];
+            let currentX = 50;
 
             for (let i = 0; i < rows; i++) {
-                let direction = Math.random() < 0.5 ? -1 : 1;
-                const remainingRows = rows - i - 1;
-                const minPossibleEnd = path.length - 1 - remainingRows;
-                const maxPossibleEnd = path.length - 1 + remainingRows;
-
-                if(outcomeBin > maxPossibleEnd) direction = 1;
-                if(outcomeBin < minPossibleEnd) direction = -1;
-
-                currentPathX += direction * 2.8;
-                path.push({ x: currentPathX, y: 7 + i * 5.5 });
+                const rand = Math.random() - 0.5;
+                currentX += rand * (100 / (i + 5));
+                path.push({ x: currentX, y: 5.8 * (i + 1) });
             }
 
             const finalX = (100 / multipliers.length) * (outcomeBin + 0.5);
-            path.push({ x: finalX, y: 100 });
+            path.push({ x: finalX, y: 97 });
             
-            setBalls(prev => [...prev, { id: Date.now(), path, outcomeBin }]);
+            setBalls(prev => [...prev.slice(-10), { id: Date.now(), path }]);
         }
     }));
     
     return (
         <div className="relative w-full aspect-square bg-gray-900/50 border border-white/10 rounded-2xl overflow-hidden p-4">
             {Array.from({ length: rows }).map((_, i) => (
-                <div key={i} className="flex justify-center" style={{ marginBottom: `${i < 8 ? 'calc(1.8% - 4px)' : 'calc(1.8% - 3.8px)'}` }}>
+                <div key={i} className="flex justify-center" style={{ marginBottom: `calc(1.8% - 1px)` }}>
                     {Array.from({ length: i + 2 }).map((_, j) => (
                         <div key={j} className="h-2 w-2 bg-white/30 rounded-full" style={{ margin: `0 calc(2.4% - ${i*0.07}px)` }} />
                     ))}
@@ -79,12 +72,12 @@ const Ball = ({ path, onComplete }: { path: { x: number; y: number }[], onComple
     const [position, setPosition] = useState(path[0]);
     useEffect(() => {
         path.forEach((pos, index) => {
-            setTimeout(() => setPosition(pos), index * 120);
+            setTimeout(() => setPosition(pos), index * 150);
         });
-        setTimeout(onComplete, path.length * 120 + 500);
+        setTimeout(onComplete, path.length * 150 + 1000);
     }, [path, onComplete]);
 
-    return <div className="absolute h-4 w-4 bg-emerald-400 rounded-full shadow-[0_0_10px_rgba(52,211,153,0.8)]" style={{ left: `calc(${position.x}% - 8px)`, top: `calc(${position.y}% - 8px)`, transition: 'left 0.12s linear, top 0.12s cubic-bezier(0.4, 0, 1, 1)' }} />;
+    return <div className="absolute h-4 w-4 bg-emerald-400 rounded-full shadow-[0_0_10px_rgba(52,211,153,0.8)]" style={{ left: `calc(${position.x}% - 8px)`, top: `calc(${position.y}% - 8px)`, transition: 'all 0.15s cubic-bezier(0.5, 0.1, 0.9, 0.8)' }} />;
 }
 
 const DepositWithdrawModal = ({ mode, isOpen, onClose, onConfirm, balance, gameBalance }: { mode: 'deposit' | 'withdraw', isOpen: boolean, onClose: () => void, onConfirm: (amount: bigint) => void, balance: bigint, gameBalance: bigint }) => {
@@ -127,7 +120,7 @@ export default function PlinkoPage() {
     }, [onChainGameBalance]);
     
     const { writeContractAsync, data: hash, reset } = useWriteContract();
-    const { isLoading: isTxLoading, isSuccess: isTxSuccess, data: receipt } = useWaitForTransactionReceipt({ hash });
+    const { isLoading: isTxLoading, isSuccess: isTxSuccess } = useWaitForTransactionReceipt({ hash });
 
     const handleDeposit = async (amount: bigint) => {
         setModalOpen(null);
@@ -140,14 +133,15 @@ export default function PlinkoPage() {
     const handleWithdraw = async () => {
         toast.info('Sending withdraw transaction...');
         try {
-            await writeContractAsync({ address: PLINKO_ADDRESS, abi: chaosPlinkoAbi, functionName: 'withdrawAll', args: [] });
+            // We use the local balance for instant feedback, but the contract ensures you can't withdraw more than you have.
+            await writeContractAsync({ address: PLINKO_ADDRESS, abi: chaosPlinkoAbi, functionName: 'withdraw', args: [localGameBalance] });
         } catch (e) { toast.error('Transaction rejected.'); }
     };
 
     const handleInstantDrop = () => {
         const bet = parseUnits(betAmount || '0', 0);
         if (localGameBalance < bet) {
-            toast.error("Not enough in-game balance for this bet.");
+            toast.error("Not enough in-game balance. Deposit more to continue.");
             return -1;
         }
         
@@ -158,11 +152,15 @@ export default function PlinkoPage() {
         const multiplier = multipliers[outcomeBin];
         const winnings = (bet * BigInt(Math.floor(multiplier * 100))) / BigInt(100);
 
-        if (winnings > BigInt(0)) {
-            setTimeout(() => setLocalGameBalance(prev => prev + winnings), 2000); // Add after animation
-        }
+        setTimeout(() => {
+            if (winnings > BigInt(0)) {
+                setLocalGameBalance(prev => prev + winnings);
+                toast.success(`WIN! You won ${formatUnits(winnings, 0)} coins!`);
+            } else {
+                toast.error(`💥 OOF! You hit a dead bin.`);
+            }
+        }, 2500); // Delay toast until after animation
         
-        toast.info(`Ball landed on ${multiplier}x!`);
         return outcomeBin;
     };
 
@@ -185,7 +183,7 @@ export default function PlinkoPage() {
                 mode={isModalOpen!}
                 onClose={() => setModalOpen(null)}
                 balance={mainBalance ?? BigInt(0)}
-                gameBalance={onChainGameBalance ?? BigInt(0)}
+                gameBalance={localGameBalance}
                 onConfirm={isModalOpen === 'deposit' ? handleDeposit : handleWithdraw}
             />
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-8 items-start">
