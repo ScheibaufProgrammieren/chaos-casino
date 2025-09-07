@@ -45,8 +45,6 @@ export default function HomePage() {
   const isMounted = useMounted();
 
   return (
-    // --- THIS IS THE FINAL FUCKING FIX ---
-    // This outer div is the CAGE. It is full width and hides horizontal overflow.
     <div className="relative w-full overflow-x-hidden">
       <div className="pointer-events-none absolute inset-0 -z-20">
         <div className="absolute -inset-[20%] animate-[spin_40s_linear_infinite] rounded-[9999px] bg-[conic-gradient(at_50%_50%,#4f46e5_0deg,#22c55e_120deg,#ec4899_240deg,#4f46e5_360deg)] opacity-30 blur-[100px]" />
@@ -55,7 +53,6 @@ export default function HomePage() {
         <div className="absolute bottom-[8%] left-[25%] h-72 w-72 animate-[pulse_5s_ease-in-out_infinite] rounded-full bg-indigo-500/20 blur-2xl" />
       </div>
 
-      {/* This main tag now just holds the content and has no overflow properties. */}
       <main className="relative z-10 mx-auto max-w-7xl px-6 py-12 md:py-20 text-white">
         <section className="animate-[fade-in-up_1s_ease-out] text-center">
           <h1 className="text-5xl font-extrabold leading-tight tracking-tighter md:text-7xl">
@@ -75,10 +72,11 @@ export default function HomePage() {
           <div className="mt-8 flex flex-wrap justify-center gap-4">
             <Link 
               href="/buy" 
+              // --- THIS IS THE FIX ---
               className={`group inline-flex items-center gap-2 rounded-xl px-6 py-3.5 text-base font-bold transition-all duration-300 hover:scale-105 active:scale-100 ${
                 isMounted && isConnected
                   ? 'bg-indigo-500 text-white shadow-[0_10px_40px_rgba(129,140,248,0.25)]'
-                  'bg-white text-black shadow-[0_10px_40px_rgba(255,255,255,0.15)]'
+                  : 'bg-white text-black shadow-[0_10px_40px_rgba(255,255,255,0.15)]'
               }`}
             >
               {isMounted && isConnected ? "Let's Go 🚀" : 'Buy Chaos Coins'}
