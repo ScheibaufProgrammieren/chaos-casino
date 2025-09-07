@@ -26,7 +26,7 @@ const PlinkoBoard = forwardRef(({ riskLevel, onBallDrop }: { riskLevel: number, 
             const outcomeBin = onBallDrop();
             if (outcomeBin === -1) return;
 
-            let path = [{ x: 50, y: 2 }];
+            let path: { x: number, y: number }[] = [{ x: 50, y: -2 }];
             let currentPathX = 50;
 
             for (let i = 0; i < rows; i++) {
@@ -132,7 +132,6 @@ export default function PlinkoPage() {
     const handleWithdraw = async () => {
         toast.info('Sending withdraw transaction...');
         try {
-            // --- THIS IS THE FIX ---
             await writeContractAsync({ address: PLINKO_ADDRESS, abi: chaosPlinkoAbi, functionName: 'withdrawAll', args: [] });
         } catch (e) { toast.error('Transaction rejected.'); }
     };
@@ -158,7 +157,7 @@ export default function PlinkoPage() {
             } else {
                 toast.error(`💥 OOF! You hit a dead bin.`);
             }
-        }, 2500);
+        }, 2800);
         
         return outcomeBin;
     };
@@ -182,11 +181,12 @@ export default function PlinkoPage() {
                 mode={isModalOpen!}
                 onClose={() => setModalOpen(null)}
                 balance={mainBalance ?? BigInt(0)}
-                gameBalance={onChainGameBalance ?? BigInt(0)}
+                gameBalance={onChainGameBalance ?? BigInt(0)} // Show on-chain balance in modal for truth
                 onConfirm={isModalOpen === 'deposit' ? handleDeposit : handleWithdraw}
             />
+            {/* --- THIS IS THE FINAL LAYOUT FIX --- */}
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-8 items-start">
-                <div className="lg-col-span-1 space-y-6 rounded-2xl border border-white/10 bg-white/[0.02] p-6 sticky top-24">
+                <div className="lg:col-span-1 space-y-6 rounded-2xl border border-white/10 bg-white/[0.02] p-6 sticky top-24">
                     <h2 className="text-2xl font-bold">Degen's Descent</h2>
                     <div className="p-4 rounded-lg bg-black/20 text-center">
                         <p className="text-sm text-white/60">Game Balance</p>
@@ -213,7 +213,7 @@ export default function PlinkoPage() {
                     </button>
                 </div>
 
-                <div className="lg-col-span-2">
+                <div className="lg:col-span-2">
                     <PlinkoBoard ref={plinkoBoardRef} riskLevel={riskLevel} onBallDrop={handleInstantDrop} />
                 </div>
             </div>
