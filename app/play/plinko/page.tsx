@@ -16,30 +16,29 @@ const RISK_LEVELS = [
     { name: 'Chaos', multipliers: [100, 30, 5, 1, 0.5, 0.3, 0.2, 0, 0, 0, 0.2, 0.3, 0.5, 1, 5, 30, 100] },
 ];
 
-// --- THE REAL FUCKING PLINKO BOARD ---
 const PlinkoBoard = forwardRef(({ riskLevel, onBallDrop }: { riskLevel: number, onBallDrop: () => number }, ref) => {
     const rows = 16;
     const multipliers = RISK_LEVELS[riskLevel].multipliers;
-    const [balls, setBalls] = useState<{ id: number; path: { x: number; y: number }[] }[]>([]);
+    const [balls, setBalls] = useState<{ id: number; path: { x: number; y: number }[]; outcomeBin: number }[]>([]);
 
     useImperativeHandle(ref, () => ({
         drop() {
             const outcomeBin = onBallDrop();
             if (outcomeBin === -1) return;
 
-            let path = [{ x: 50, y: -2 }];
-            let currentX = 50;
+            let path = [{ x: 50, y: 2 }];
+            let currentPathX = 50;
 
             for (let i = 0; i < rows; i++) {
                 const rand = Math.random() - 0.5;
-                currentX += rand * (100 / (i + 5));
-                path.push({ x: currentX, y: 5.8 * (i + 1) });
+                currentPathX += rand * (100 / (i + 5));
+                path.push({ x: currentPathX, y: 5.8 * (i + 1) });
             }
 
             const finalX = (100 / multipliers.length) * (outcomeBin + 0.5);
             path.push({ x: finalX, y: 97 });
             
-            setBalls(prev => [...prev.slice(-10), { id: Date.now(), path }]);
+            setBalls(prev => [...prev.slice(-10), { id: Date.now(), path, outcomeBin }]);
         }
     }));
     
@@ -133,8 +132,8 @@ export default function PlinkoPage() {
     const handleWithdraw = async () => {
         toast.info('Sending withdraw transaction...');
         try {
-            // We use the local balance for instant feedback, but the contract ensures you can't withdraw more than you have.
-            await writeContractAsync({ address: PLINKO_ADDRESS, abi: chaosPlinkoAbi, functionName: 'withdraw', args: [localGameBalance] });
+            // --- THIS IS THE FIX ---
+            await writeContractAsync({ address: PLINKO_ADDRESS, abi: chaosPlinkoAbi, functionName: 'withdrawAll', args: [] });
         } catch (e) { toast.error('Transaction rejected.'); }
     };
 
@@ -159,7 +158,7 @@ export default function PlinkoPage() {
             } else {
                 toast.error(`💥 OOF! You hit a dead bin.`);
             }
-        }, 2500); // Delay toast until after animation
+        }, 2500);
         
         return outcomeBin;
     };
@@ -183,11 +182,11 @@ export default function PlinkoPage() {
                 mode={isModalOpen!}
                 onClose={() => setModalOpen(null)}
                 balance={mainBalance ?? BigInt(0)}
-                gameBalance={localGameBalance}
+                gameBalance={onChainGameBalance ?? BigInt(0)}
                 onConfirm={isModalOpen === 'deposit' ? handleDeposit : handleWithdraw}
             />
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-8 items-start">
-                <div className="lg:col-span-1 space-y-6 rounded-2xl border border-white/10 bg-white/[0.02] p-6 sticky top-24">
+                <div className="lg-col-span-1 space-y-6 rounded-2xl border border-white/10 bg-white/[0.02] p-6 sticky top-24">
                     <h2 className="text-2xl font-bold">Degen's Descent</h2>
                     <div className="p-4 rounded-lg bg-black/20 text-center">
                         <p className="text-sm text-white/60">Game Balance</p>
@@ -214,7 +213,7 @@ export default function PlinkoPage() {
                     </button>
                 </div>
 
-                <div className="lg:col-span-2">
+                <div className="lg-col-span-2">
                     <PlinkoBoard ref={plinkoBoardRef} riskLevel={riskLevel} onBallDrop={handleInstantDrop} />
                 </div>
             </div>
