@@ -26,14 +26,13 @@ const PlinkoBoard = ({ riskLevel, outcomeBin, onAnimationComplete }: { riskLevel
         if (outcomeBin === null || isAnimating) return;
 
         setIsAnimating(true);
-        
         let path: { x: number, y: number }[] = [{ x: 50, y: 2 }];
-        let currentPegIndex = Math.floor(rows / 2);
+        let currentPegIndex = 8;
 
         for (let i = 0; i < rows; i++) {
-            const startX = 50 - (i * 2.5);
+            const startX = 50 - (i * 2.9);
             let direction = Math.random() < 0.5 ? -1 : 1;
-            
+
             const remainingRows = rows - i - 1;
             const minPossibleEnd = currentPegIndex - remainingRows;
             const maxPossibleEnd = currentPegIndex + remainingRows;
@@ -42,7 +41,7 @@ const PlinkoBoard = ({ riskLevel, outcomeBin, onAnimationComplete }: { riskLevel
 
             if (direction === 1) currentPegIndex++;
 
-            path.push({ x: startX + currentPegIndex * 5, y: 7 + i * 5.5 });
+            path.push({ x: startX + currentPegIndex * 5.8, y: 7 + i * 5.5 });
         }
         
         const finalX = (100 / (multipliers.length + 1)) * (outcomeBin + 1.5);
@@ -60,7 +59,7 @@ const PlinkoBoard = ({ riskLevel, outcomeBin, onAnimationComplete }: { riskLevel
             }, index * 150);
         });
 
-    }, [outcomeBin, isAnimating, onAnimationComplete, rows, multipliers.length]);
+    }, [outcomeBin, isAnimating, onAnimationComplete, multipliers.length]);
     
     return (
         <div className="relative w-full aspect-[4/3] bg-gray-900/50 border border-white/10 rounded-2xl overflow-hidden p-4">
@@ -72,18 +71,16 @@ const PlinkoBoard = ({ riskLevel, outcomeBin, onAnimationComplete }: { riskLevel
             {Array.from({ length: rows }).map((_, i) => (
                 <div key={i} className="flex justify-center" style={{ marginBottom: 'calc(2.75% - 4px)'}}>
                     {Array.from({ length: i + 1 }).map((_, j) => (
-                        <div key={j} className="h-2 w-2 bg-white/30 rounded-full" style={{ margin: '0 2.5%' }} />
+                        <div key={j} className="h-2 w-2 bg-white/30 rounded-full" style={{ margin: '0 2.8%' }} />
                     ))}
                 </div>
             ))}
             <div className="absolute bottom-0 left-0 w-full h-[8%] flex justify-center px-1">
                 {multipliers.map((m, i) => {
                     const isDead = m === 0;
+                    const colorClass = outcomeBin === i ? (isDead ? 'bg-rose-600' : 'bg-emerald-500') : (isDead ? 'bg-rose-900/50' : 'bg-gray-800/50');
                     return (
-                        <div key={i} className={`text-xs text-center font-bold h-full flex-1 flex items-center justify-center rounded-t-md mx-px transition-all duration-300
-                            ${(isAnimating && outcomeBin === i) ? 'animate-pulse' : ''}
-                            ${outcomeBin === i ? (isDead ? 'bg-rose-600' : 'bg-emerald-500') : (isDead ? 'bg-rose-900/50' : 'bg-gray-800/50')}
-                        `}>
+                        <div key={i} className={`text-xs text-center font-bold h-full flex-1 flex items-center justify-center rounded-t-md mx-px transition-colors duration-300 ${colorClass}`}>
                             {m}x
                         </div>
                     );
@@ -109,7 +106,6 @@ const DepositWithdrawModal = ({ mode, isOpen, onClose, onConfirm, balance, gameB
                     Game Balance: {formatUnits(gameBalance, 0)} Coins
                 </div>
                 <input type="number" value={amount} onChange={(e) => setAmount(e.target.value)} className="w-full mt-4 rounded-xl border-white/10 bg-white/5 p-4 text-xl font-semibold outline-none ring-1 ring-inset ring-white/10" placeholder="0"/>
-                {/* --- THIS IS THE FIX --- */}
                 <button onClick={() => onConfirm(amountAsBigInt)} disabled={!amount || amountAsBigInt === BigInt(0) || amountAsBigInt > maxAmount} className="btn-cta glow mt-6">Confirm {mode}</button>
             </div>
         </div>
@@ -129,32 +125,39 @@ export default function PlinkoPage() {
     const { writeContractAsync, data: hash, reset } = useWriteContract();
     const { isLoading, isSuccess, data: receipt } = useWaitForTransactionReceipt({ hash });
 
-    // --- THIS IS THE FIX ---
     const betAmountAsBigInt = betAmount ? parseUnits(betAmount, 0) : BigInt(0);
     const hasEnoughInGame = gameBalance ? gameBalance >= betAmountAsBigInt : false;
 
-    async function handleTx(functionName: 'deposit' | 'withdraw' | 'dropBall', args: any[]) {
+    // --- THIS IS THE FIX ---
+    // We make separate, type-safe functions instead of one generic one.
+    async function handleDeposit(amount: bigint) {
+        setModalOpen(null);
         try {
-            await writeContractAsync({ address: PLINKO_ADDRESS, abi: chaosPlinkoAbi, functionName, args });
-            toast.info('Sending transaction...');
-            return true;
-        } catch (e) {
-            console.error(e);
-            toast.error('Transaction rejected.');
-            return false;
-        }
+            await writeContractAsync({ address: PLINKO_ADDRESS, abi: chaosPlinkoAbi, functionName: 'deposit', args: [amount] });
+            toast.info('Sending deposit transaction...');
+        } catch (e) { toast.error('Transaction rejected.'); }
     }
 
-    async function handleDeposit(amount: bigint) {
-        if (await handleTx('deposit', [amount])) setModalOpen(null);
-    }
     async function handleWithdraw(amount: bigint) {
-        if (await handleTx('withdraw', [amount])) setModalOpen(null);
+        setModalOpen(null);
+        try {
+            await writeContractAsync({ address: PLINKO_ADDRESS, abi: chaosPlinkoAbi, functionName: 'withdraw', args: [amount] });
+            toast.info('Sending withdraw transaction...');
+        } catch (e) { toast.error('Transaction rejected.'); }
     }
+
     async function handleDrop() {
         if (!hasEnoughInGame) { toast.error('Not enough in-game balance.'); return; }
         setOutcomeBin(null);
-        await handleTx('dropBall', [betAmountAsBigInt, riskLevel]);
+        try {
+            await writeContractAsync({
+                address: PLINKO_ADDRESS,
+                abi: chaosPlinkoAbi,
+                functionName: 'dropBall',
+                args: [betAmountAsBigInt, riskLevel],
+            });
+            toast.info('Dropping ball...');
+        } catch (e) { toast.error('Transaction rejected.'); }
     }
 
     useEffect(() => {
@@ -169,9 +172,16 @@ export default function PlinkoPage() {
             for (const log of receipt.logs) { try { const event = decodeEventLog({ abi: chaosPlinkoAbi, ...log }); if (event.eventName === 'BallDropped') { dropEvent = event; break; } } catch {} }
             
             if (dropEvent && dropEvent.args.outcomeBin !== undefined) {
-                setOutcomeBin(dropEvent.args.outcomeBin);
+                const { coinsWon, outcomeBin: bin } = dropEvent.args;
+                setOutcomeBin(bin); // Trigger animation
+
+                // Show toast immediately on confirmation
+                if (coinsWon === BigInt(0)) {
+                    toast.error('💥 UNLUCKY! You hit a dead bin.');
+                } else {
+                    toast.success(`WIN! You won ${formatUnits(coinsWon, 0)} coins back!`);
+                }
             }
-            
             reset();
         }
     }, [isSuccess, receipt, refetchMainBalance, refetchGameBalance, reset]);
@@ -182,7 +192,6 @@ export default function PlinkoPage() {
                 isOpen={isModalOpen !== null}
                 mode={isModalOpen!}
                 onClose={() => setModalOpen(null)}
-                // --- THIS IS THE FIX ---
                 balance={mainBalance ?? BigInt(0)}
                 gameBalance={gameBalance ?? BigInt(0)}
                 onConfirm={isModalOpen === 'deposit' ? handleDeposit : handleWithdraw}
@@ -195,7 +204,6 @@ export default function PlinkoPage() {
                     </div>
                     <div className="p-4 rounded-lg bg-black/20 text-center">
                         <p className="text-sm text-white/60">Game Balance</p>
-                        {/* --- THIS IS THE FIX --- */}
                         <p className="text-3xl font-bold">{formatUnits(gameBalance ?? BigInt(0), 0)}</p>
                         <div className="grid grid-cols-2 gap-2 mt-3">
                             <button onClick={() => setModalOpen('deposit')} className="btn-ghost">Deposit</button>
@@ -220,21 +228,7 @@ export default function PlinkoPage() {
                 </div>
 
                 <div className="lg:col-span-2">
-                    <PlinkoBoard riskLevel={riskLevel} outcomeBin={outcomeBin} onAnimationComplete={() => {
-                        if(receipt) {
-                             let dropEvent;
-                            for (const log of receipt.logs) { try { const event = decodeEventLog({ abi: chaosPlinkoAbi, ...log }); if (event.eventName === 'BallDropped') { dropEvent = event; break; } } catch {} }
-                            if (dropEvent && dropEvent.args.coinsWon !== undefined) {
-                                const { coinsWon } = dropEvent.args;
-                                if (coinsWon === BigInt(0)) {
-                                    toast.error('💥 UNLUCKY! You hit a dead bin.');
-                                } else {
-                                    toast.success(`WIN! You won ${formatUnits(coinsWon, 0)} coins back!`);
-                                }
-                            }
-                        }
-                        setOutcomeBin(null);
-                    }} />
+                    <PlinkoBoard riskLevel={riskLevel} outcomeBin={outcomeBin} onAnimationComplete={() => setOutcomeBin(null)} />
                 </div>
             </div>
         </main>
