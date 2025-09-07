@@ -23,9 +23,6 @@ export default function CoinFlipPage() {
   const [isSpinning, setIsSpinning] = useState<boolean>(false);
   const [coinResult, setCoinResult] = useState<'heads' | 'tails'>('heads');
   const [hapticResult, setHapticResult] = useState<'win' | 'lose' | null>(null);
-  
-  // --- THIS IS THE FIX ---
-  // This new state variable "remembers" what button you just pressed.
   const [currentAction, setCurrentAction] = useState<Action | null>(null);
 
   const { data: coins, refetch: refetchCoins } = useReadContract({ address: HUB_ADDRESS, abi: chaosCoinAbi, functionName: 'getCoins', args: [address ?? ZERO_ADDRESS], query: { enabled: !!address }, });
@@ -35,41 +32,55 @@ export default function CoinFlipPage() {
   const { writeContractAsync, data: hash, reset: resetWriteContract } = useWriteContract();
   const { isLoading: isConfirming, isSuccess: isConfirmed, data: receipt } = useWaitForTransactionReceipt({ hash });
   
-  const hasEnoughCoins = useMemo(() => (coins ? coins >= 1 : false), [coins]);
-  const hasPointsToClaim = useMemo(() => (pendingPoints ? pendingPoints > 0 : false), [pendingPoints]);
+  const hasEnoughCoins = useMemo(() => (coins ? coins >= BigInt(1) : false), [coins]);
+  const hasPointsToClaim = useMemo(() => (pendingPoints ? pendingPoints > BigInt(0) : false), [pendingPoints]);
 
   async function placeBet() {
     if (!hasEnoughCoins) { toast.error('You need at least 1 coin to play.'); return; }
     setCurrentAction('placing_bet');
     const toastId = toast.loading('Placing your bet...');
-    try { await writeContractAsync({ address: COINFLIP_ADDRESS, abi: coinFlipAbi, functionName: 'placeBet', args: [guessHeads] }); toast.loading('Waiting for confirmation...', { id: toastId }); } 
-    catch (e) { toast.error('Transaction rejected.', { id: toastId }); setCurrentAction(null); }
+    try { 
+        await writeContractAsync({ address: COINFLIP_ADDRESS, abi: coinFlipAbi, functionName: 'placeBet', args: [guessHeads] }); 
+        toast.loading('Waiting for confirmation...', { id: toastId }); 
+    } catch (e) { 
+        toast.error('Transaction rejected.', { id: toastId }); 
+        setCurrentAction(null); 
+    }
   }
 
   async function flipCoin() {
     setCurrentAction('flipping_coin');
     const toastId = toast.loading('Flipping the coin...');
-    try { await writeContractAsync({ address: COINFLIP_ADDRESS, abi: coinFlipAbi, functionName: 'flip', args: [] }); toast.loading('Waiting for the on-chain result...', { id: toastId }); } 
-    catch (e) { toast.error('Transaction rejected.', { id: toastId }); setCurrentAction(null); }
+    try { 
+        await writeContractAsync({ address: COINFLIP_ADDRESS, abi: coinFlipAbi, functionName: 'flip', args: [] }); 
+        toast.loading('Waiting for the on-chain result...', { id: toastId }); 
+    } catch (e) { 
+        toast.error('Transaction rejected.', { id: toastId }); 
+        setCurrentAction(null); 
+    }
   }
 
   async function claim() {
     setCurrentAction('claiming_points');
     const toastId = toast.loading('Claiming your points...');
-    try { await writeContractAsync({ address: COINFLIP_ADDRESS, abi: coinFlipAbi, functionName: 'claimPoints', args: [] }); toast.loading('Waiting for confirmation...', { id: toastId }); } 
-    catch (e) { toast.error('Transaction rejected.', { id: toastId }); setCurrentAction(null); }
+    try { 
+        await writeContractAsync({ address: COINFLIP_ADDRESS, abi: coinFlipAbi, functionName: 'claimPoints', args: [] }); 
+        toast.loading('Waiting for confirmation...', { id: toastId }); 
+    } catch (e) { 
+        toast.error('Transaction rejected.', { id: toastId }); 
+        setCurrentAction(null); 
+    }
   }
 
-  // --- THIS IS THE NEW, SMART, AND ONLY EFFECT HOOK ---
+  // --- THIS IS THE FIX: EFFECT #1 - THE TRANSACTION HANDLER ---
+  // This specialist hook ONLY runs when a transaction is confirmed. It cannot be interrupted.
   useEffect(() => {
-    const handleSync = async () => {
-        // First, handle confirmations
-        if (isConfirmed && receipt && currentAction) {
+    if (isConfirmed && receipt && currentAction) {
+        const handleConfirmation = async () => {
             toast.dismiss();
             toast.success('Transaction Confirmed!');
-            resetWriteContract();
 
-            // Refetch all data to get the latest state
+            // Refetch all data FIRST to guarantee we have the latest state.
             await Promise.all([refetchCoins(), refetchActiveBet(), refetchPendingPoints()]);
 
             if (currentAction === 'placing_bet') {
@@ -91,43 +102,65 @@ export default function CoinFlipPage() {
                         setHapticResult(win ? 'win' : 'lose');
                         setStep('finished');
                     }, 1200);
+                } else {
+                    // Fallback if event isn't found, check the refetched data
+                     if (pendingPoints && pendingPoints > BigInt(0)) {
+                         setStep('finished');
+                         setHapticResult('win');
+                     } else {
+                         setStep('finished');
+                         setHapticResult('lose');
+                     }
                 }
             }
-            setCurrentAction(null); // Reset the action
-            return; // Exit after handling confirmation
-        }
+            
+            setCurrentAction(null);
+            resetWriteContract();
+        };
+        handleConfirmation();
+    }
+  }, [isConfirmed, receipt, currentAction, refetchCoins, refetchActiveBet, refetchPendingPoints, resetWriteContract]);
+  
+  // --- THIS IS THE FIX: EFFECT #2 - THE STATE SYNCHRONIZER ---
+  // This hook sets the initial state and ONLY runs when nothing else is happening.
+  useEffect(() => {
+    // This is the guard clause. If a transaction is confirming or has just finished, DO NOTHING.
+    if (isConfirming || currentAction) return;
 
-        // If not confirming, just sync the UI state with the blockchain
-        if (!isConfirming && !currentAction) {
-            setHapticResult(null);
-            if (hasPointsToClaim) { setStep('finished'); } 
-            else if (hasActiveBet) { setStep('flipping'); } 
-            else { setStep('choosing'); }
-        }
-    };
-    handleSync();
-  }, [isConfirmed, receipt, hasActiveBet, hasPointsToClaim, isConfirming]);
+    setHapticResult(null);
+    if (hasPointsToClaim) {
+        setStep('finished');
+    } else if (hasActiveBet) {
+        setStep('flipping');
+    } else {
+        setStep('choosing');
+    }
+  }, [hasActiveBet, hasPointsToClaim, isConfirming, currentAction, address]);
 
   const statusText = useMemo(() => {
-    if (isConfirming) return 'Confirming in wallet...';
+    const isActionActive = isConfirming || currentAction;
+    if (isActionActive) return 'Confirming in wallet...';
+
     if (step === 'choosing') return 'Choose a side and place your bet.';
     if (step === 'flipping') return 'Your bet is locked. Flip the coin!';
     if (step === 'finished') {
-      if(hasPointsToClaim) return `You won! Claim your ${Number(pendingPoints)} points.`;
+      if (hasPointsToClaim) return `You won! Claim your ${Number(pendingPoints)} points.`;
       return 'Unlucky. Better luck next time!';
     }
     return 'Ready.';
-  }, [step, isConfirming, hasPointsToClaim, pendingPoints]);
+  }, [step, isConfirming, currentAction, hasPointsToClaim, pendingPoints]);
+
+  const isButtonDisabled = isConfirming || !!currentAction;
 
   return (
     <main className="mx-auto max-w-7xl px-6 py-12">
       <div className="grid grid-cols-1 items-center gap-12 lg:grid-cols-2">
         <div className="flex flex-col items-center justify-center">
-          <div className="bg-coin-aura">
-            <div className={`coin ${isSpinning ? 'spin' : ''} ${coinResult === 'heads' ? 'show-heads' : 'show-tails'} ${hapticResult === 'win' ? 'coin-win' : hapticResult === 'lose' ? 'coin-lose' : ''}`} >
-              {/* --- REMOVE THE H AND T FROM HERE --- */}
-              <div className="face heads"></div>
-              <div className="face tails"></div>
+          <div className="relative w-[220px] h-[220px]"> {/* Container for aura */}
+            <div className={`absolute -inset-8 rounded-full transition-all duration-500 ${hapticResult === 'win' ? 'bg-emerald-500/30 shadow-[0_0_80px_rgba(52,211,153,0.5)]' : ''} ${hapticResult === 'lose' ? 'bg-rose-500/30 shadow-[0_0_80px_rgba(244,63,94,0.5)]' : ''}`}/>
+            <div className={`coin ${isSpinning ? 'spin' : ''} ${coinResult === 'heads' ? 'show-heads' : 'show-tails'}`}>
+              <div className="face heads" />
+              <div className="face tails" />
             </div>
           </div>
         </div>
@@ -138,15 +171,15 @@ export default function CoinFlipPage() {
             <div>
               <h2 className="text-lg font-semibold text-white/80">1. Choose Your Fate</h2>
               <div className="mt-3 grid grid-cols-2 gap-4">
-                <button onClick={() => setGuessHeads(true)} disabled={step !== 'choosing'} className={`choice ${guessHeads ? 'active' : ''} ${step !== 'choosing' ? 'disabled' : ''}`}>Heads</button>
-                <button onClick={() => setGuessHeads(false)} disabled={step !== 'choosing'} className={`choice ${!guessHeads ? 'active' : ''} ${step !== 'choosing' ? 'disabled' : ''}`}>Tails</button>
+                <button onClick={() => setGuessHeads(true)} disabled={step !== 'choosing' || isButtonDisabled} className={`choice ${guessHeads ? 'active' : ''} ${step !== 'choosing' || isButtonDisabled ? 'disabled' : ''}`}>Heads</button>
+                <button onClick={() => setGuessHeads(false)} disabled={step !== 'choosing' || isButtonDisabled} className={`choice ${!guessHeads ? 'active' : ''} ${step !== 'choosing' || isButtonDisabled ? 'disabled' : ''}`}>Tails</button>
               </div>
             </div>
             <div>
-              {step === 'choosing' && <button onClick={placeBet} disabled={isConfirming} className="btn-cta">Place Bet (1 Coin)</button>}
-              {step === 'flipping' && <button onClick={flipCoin} disabled={isConfirming} className="btn-cta success">Flip the Coin</button>}
-              {step === 'finished' && ( <> {hasPointsToClaim ? ( <button onClick={claim} disabled={isConfirming} className="btn-cta glow">{`Claim ${Number(pendingPoints)} Points`}</button> ) : ( <button onClick={() => { setStep('choosing'); setCurrentAction(null); }} className="btn-cta">Play Again</button> )} </> )}
-              {isConfirming && <button disabled className="btn-cta animate-pulse">Waiting for Wallet...</button>}
+              {step === 'choosing' && <button onClick={placeBet} disabled={isButtonDisabled} className="btn-cta">Place Bet (1 Coin)</button>}
+              {step === 'flipping' && <button onClick={flipCoin} disabled={isButtonDisabled} className="btn-cta success">Flip the Coin</button>}
+              {step === 'finished' && ( <> {hasPointsToClaim ? ( <button onClick={claim} disabled={isButtonDisabled} className="btn-cta glow">{`Claim ${Number(pendingPoints)} Points`}</button> ) : ( <button onClick={() => { setStep('choosing'); }} className="btn-cta">Play Again</button> )} </> )}
+              {isButtonDisabled && <button disabled className="btn-cta animate-pulse">Waiting for Wallet...</button>}
             </div>
             <div className="rounded-lg border border-white/10 bg-white/5 p-3 text-center text-sm text-white/80">
               {statusText}
