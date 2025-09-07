@@ -126,8 +126,8 @@ export default function HomePage() {
             />
           
             <GameCard
-              href=""
-              title="Chaos Cascade"
+              href="/play/Pegs"
+              title="Chaos Pegs"
               description="Risk it all in a chaotic cascade of chance. Watch the balls fall and pray they miss the void. Push your luck and collect your winnings before you lose it all."
               tag="🔥 NEW GAME 🔥"
               bgClass="bg-[url('/cascade-bg.png')] bg-cover bg-center"
