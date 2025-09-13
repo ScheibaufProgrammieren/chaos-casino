@@ -15,7 +15,7 @@ type Action = 'placing_bet' | 'flipping_coin' | 'claiming_points';
 
 export default function CoinFlipPage() {
   const { address } = useAccount();
-  const publicClient = usePublicClient(); // <-- THE GAS STATION MANAGER
+  const publicClient = usePublicClient();
   
   const [guessHeads, setGuessHeads] = useState<boolean>(true);
   const [step, setStep] = useState<Step>('choosing');
@@ -42,91 +42,69 @@ export default function CoinFlipPage() {
     setHapticResult(null);
   };
 
-  // --- THIS IS THE UPGRADED, BULLETPROOF FUNCTION ---
-  async function placeBet() {
-    if (!hasEnoughCoins || !address) { toast.error('You need at least 1 coin to play.'); return; }
+  const handleWrite = async (
+    functionName: 'placeBet' | 'flip' | 'claimPoints',
+    args: any[],
+    toastId: string | number
+  ) => {
+    // --- THIS IS THE FIX ---
+    // We check if publicClient exists BEFORE we try to use it.
+    if (!publicClient || !address) {
+        toast.error('Wallet not connected properly.', { id: toastId });
+        setCurrentAction(null);
+        return;
+    }
+
+    try {
+        const estimatedGas = await publicClient.estimateContractGas({ address: COINFLIP_ADDRESS, abi: coinFlipAbi, functionName, args, account: address });
+        const gasWithBuffer = (estimatedGas * 120n) / 100n;
+
+        toast.loading('Waiting for your confirmation...', { id: toastId });
+        await writeContractAsync({ address: COINFLIP_ADDRESS, abi: coinFlipAbi, functionName, args, gas: gasWithBuffer }); 
+    } catch (e) { 
+        toast.error('Transaction rejected.', { id: toastId }); 
+        setCurrentAction(null); 
+    }
+  }
+
+  const placeBet = () => {
+    if (!hasEnoughCoins) { toast.error('You need at least 1 coin to play.'); return; }
     setCurrentAction('placing_bet');
     setLastFlipResult(null);
-    const toastId = toast.loading('Calculating transaction cost...');
-    try { 
-        // 1. Estimate the gas
-        const estimatedGas = await publicClient.estimateContractGas({ address: COINFLIP_ADDRESS, abi: coinFlipAbi, functionName: 'placeBet', args: [guessHeads], account: address });
-        const gasWithBuffer = (estimatedGas * 120n) / 100n; // Add 20% safety buffer
-
-        // 2. Send the transaction with the exact gas amount
-        toast.loading('Placing your bet...', { id: toastId });
-        await writeContractAsync({ address: COINFLIP_ADDRESS, abi: coinFlipAbi, functionName: 'placeBet', args: [guessHeads], gas: gasWithBuffer }); 
-    } catch (e) { 
-        toast.error('Transaction rejected.', { id: toastId }); 
-        setCurrentAction(null); 
-    }
+    const toastId = toast.loading('Placing your bet...');
+    handleWrite('placeBet', [guessHeads], toastId);
   }
 
-  // --- THIS IS THE UPGRADED, BULLETPROOF FUNCTION ---
-  async function flipCoin() {
-    if (!address) return;
+  const flipCoin = () => {
     setCurrentAction('flipping_coin');
-    const toastId = toast.loading('Calculating transaction cost...');
-    try { 
-        const estimatedGas = await publicClient.estimateContractGas({ address: COINFLIP_ADDRESS, abi: coinFlipAbi, functionName: 'flip', args: [], account: address });
-        const gasWithBuffer = (estimatedGas * 120n) / 100n;
-
-        toast.loading('Flipping the coin...', { id: toastId });
-        await writeContractAsync({ address: COINFLIP_ADDRESS, abi: coinFlipAbi, functionName: 'flip', args: [], gas: gasWithBuffer }); 
-    } catch (e) { 
-        toast.error('Transaction rejected.', { id: toastId }); 
-        setCurrentAction(null); 
-    }
+    const toastId = toast.loading('Flipping the coin...');
+    handleWrite('flip', [], toastId);
   }
 
-  // --- THIS IS THE UPGRADED, BULLETPROOF FUNCTION ---
-  async function claim() {
-    if (!address) return;
+  const claim = () => {
     setCurrentAction('claiming_points');
-    const toastId = toast.loading('Calculating transaction cost...');
-    try { 
-        const estimatedGas = await publicClient.estimateContractGas({ address: COINFLIP_ADDRESS, abi: coinFlipAbi, functionName: 'claimPoints', args: [], account: address });
-        const gasWithBuffer = (estimatedGas * 120n) / 100n;
-
-        toast.loading('Claiming your points...', { id: toastId });
-        await writeContractAsync({ address: COINFLIP_ADDRESS, abi: coinFlipAbi, functionName: 'claimPoints', args: [], gas: gasWithBuffer }); 
-    } catch (e) { 
-        toast.error('Transaction rejected.', { id: toastId }); 
-        setCurrentAction(null); 
-    }
+    const toastId = toast.loading('Claiming your points...');
+    handleWrite('claimPoints', [], toastId);
   }
 
   useEffect(() => {
     if (isConfirmed && receipt && currentAction) {
         const handleConfirmation = async () => {
-            toast.dismiss(); // Clear the loading toast
+            toast.dismiss();
             toast.success('Transaction Confirmed!');
-
-            if (currentAction === 'placing_bet') {
-                setStep('flipping');
-            } 
-            else if (currentAction === 'claiming_points') {
-                resetGame();
-            } 
+            if (currentAction === 'placing_bet') setStep('flipping');
+            else if (currentAction === 'claiming_points') resetGame();
             else if (currentAction === 'flipping_coin') {
                 let coinFlippedEvent;
                 for (const log of receipt.logs) { try { const event = decodeEventLog({ abi: coinFlipAbi, ...log }); if (event.eventName === 'CoinFlipped') { coinFlippedEvent = event; break; } } catch {} }
-
                 if (coinFlippedEvent) {
                     const { win, resultHeads } = coinFlippedEvent.args;
                     setLastFlipResult({ win });
                     setIsSpinning(true);
                     setTimeout(() => setCoinResult(resultHeads ? 'heads' : 'tails'), 100);
-                    setTimeout(() => {
-                        setIsSpinning(false);
-                        setHapticResult(win ? 'win' : 'lose');
-                        setStep('finished');
-                    }, 1200);
-                } else {
-                    toast.error("Could not determine flip result. Please refresh.");
-                }
+                    setTimeout(() => { setIsSpinning(false); setHapticResult(win ? 'win' : 'lose'); setStep('finished'); }, 1200);
+                } else { toast.error("Could not determine flip result. Please refresh."); }
             }
-            
             await Promise.all([refetchCoins(), refetchActiveBet(), refetchPendingPoints()]);
             setCurrentAction(null);
             resetWriteContract();
