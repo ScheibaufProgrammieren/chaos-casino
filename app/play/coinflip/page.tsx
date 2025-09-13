@@ -3,7 +3,7 @@
 import { useState, useMemo, useEffect } from 'react';
 import { useAccount, usePublicClient, useReadContract, useWriteContract, useWaitForTransactionReceipt } from 'wagmi';
 import { toast } from 'sonner';
-import { decodeEventLog, parseUnits } from 'viem';
+import { decodeEventLog } from 'viem';
 import { chaosCoinAbi, coinFlipAbi } from '@/lib/abi';
 
 const HUB_ADDRESS = process.env.NEXT_PUBLIC_HUB_ADDRESS as `0x${string}`;
@@ -23,7 +23,6 @@ export default function CoinFlipPage() {
   const [coinResult, setCoinResult] = useState<'heads' | 'tails'>('heads');
   const [hapticResult, setHapticResult] = useState<'win' | 'lose' | null>(null);
   const [currentAction, setCurrentAction] = useState<Action | null>(null);
-  const [lastFlipResult, setLastFlipResult] = useState<{ win: boolean } | null>(null);
 
   const { data: coins, refetch: refetchCoins } = useReadContract({ address: HUB_ADDRESS, abi: chaosCoinAbi, functionName: 'getCoins', args: [address ?? ZERO_ADDRESS], query: { enabled: !!address } });
   const { data: hasActiveBet, refetch: refetchActiveBet } = useReadContract({ address: COINFLIP_ADDRESS, abi: coinFlipAbi, functionName: 'hasActiveBet', args: [address ?? ZERO_ADDRESS], query: { enabled: !!address } });
@@ -33,113 +32,105 @@ export default function CoinFlipPage() {
   const { isLoading: isConfirming, isSuccess: isConfirmed, data: receipt } = useWaitForTransactionReceipt({ hash });
   
   const hasEnoughCoins = useMemo(() => (coins ? coins >= BigInt(1) : false), [coins]);
-  const showClaimButton = useMemo(() => (pendingPoints && pendingPoints > BigInt(0)) || lastFlipResult?.win === true, [pendingPoints, lastFlipResult]);
+  
+  // This memo now includes the receipt status for instant feedback
+  const showClaimButton = useMemo(() => {
+    if (isConfirmed && receipt && currentAction === 'flipping_coin') {
+        let coinFlippedEvent;
+        for (const log of receipt.logs) { try { const event = decodeEventLog({ abi: coinFlipAbi, ...log }); if (event.eventName === 'CoinFlipped') { coinFlippedEvent = event; break; } } catch {} }
+        if (coinFlippedEvent) return coinFlippedEvent.args.win;
+    }
+    return pendingPoints && pendingPoints > BigInt(0);
+  }, [pendingPoints, isConfirmed, receipt, currentAction]);
 
   const resetGame = () => {
     setStep('choosing');
-    setLastFlipResult(null);
     setCurrentAction(null);
     setHapticResult(null);
   };
 
-  // --- THESE ARE THE NEW, BULLETPROOF FUNCTIONS ---
-  async function placeBet() {
-    if (!address || !publicClient) return toast.error('Wallet not ready.');
+  const handleWrite = async (functionName: 'placeBet' | 'flip' | 'claimPoints', args: any[]) => {
+    if (!publicClient || !address) return toast.error('Wallet not connected properly.');
+    
+    try {
+        const { request } = await publicClient.simulateContract({
+            address: COINFLIP_ADDRESS, abi: coinFlipAbi, functionName, args, account: address
+        });
+        await writeContractAsync(request);
+    } catch (e) {
+        toast.error('Transaction rejected.');
+        setCurrentAction(null);
+    }
+  }
+
+  const placeBet = () => {
     if (!hasEnoughCoins) { toast.error('You need at least 1 coin to play.'); return; }
-    
     setCurrentAction('placing_bet');
-    setLastFlipResult(null);
-    const toastId = toast.loading('Placing your bet...');
-    
-    try { 
-        const { request } = await publicClient.simulateContract({
-            address: COINFLIP_ADDRESS,
-            abi: coinFlipAbi,
-            functionName: 'placeBet',
-            args: [guessHeads],
-            account: address
-        });
-        await writeContractAsync(request);
-    } catch (e) { 
-        toast.error('Transaction rejected.', { id: toastId }); 
-        setCurrentAction(null); 
-    }
+    handleWrite('placeBet', [guessHeads]);
   }
 
-  async function flipCoin() {
-    if (!address || !publicClient) return toast.error('Wallet not ready.');
+  const flipCoin = () => {
     setCurrentAction('flipping_coin');
-    const toastId = toast.loading('Flipping the coin...');
-    
-    try { 
-        const { request } = await publicClient.simulateContract({
-            address: COINFLIP_ADDRESS,
-            abi: coinFlipAbi,
-            functionName: 'flip',
-            account: address
-        });
-        await writeContractAsync(request); 
-    } catch (e) { 
-        toast.error('Transaction rejected.', { id: toastId }); 
-        setCurrentAction(null); 
-    }
+    handleWrite('flip', []);
   }
 
-  async function claim() {
-    if (!address || !publicClient) return toast.error('Wallet not ready.');
+  const claim = () => {
     setCurrentAction('claiming_points');
-    const toastId = toast.loading('Claiming your points...');
-    
-    try { 
-        const { request } = await publicClient.simulateContract({
-            address: COINFLIP_ADDRESS,
-            abi: coinFlipAbi,
-            functionName: 'claimPoints',
-            account: address
-        });
-        await writeContractAsync(request);
-    } catch (e) { 
-        toast.error('Transaction rejected.', { id: toastId }); 
-        setCurrentAction(null); 
-    }
+    handleWrite('claimPoints', []);
   }
 
+  // --- THIS IS THE FINAL, BULLETPROOF HOOK ---
+  // It is the one and only BOSS of the page. It controls EVERYTHING.
   useEffect(() => {
+    // Priority 1: Handle a fresh transaction confirmation. This is the truth.
     if (isConfirmed && receipt && currentAction) {
         const handleConfirmation = async () => {
-            toast.dismiss();
             toast.success('Transaction Confirmed!');
-            if (currentAction === 'placing_bet') setStep('flipping');
-            else if (currentAction === 'claiming_points') resetGame();
+            
+            // Refetch data in the background AFTER we've already forced the UI to update.
+            await Promise.all([refetchCoins(), refetchActiveBet(), refetchPendingPoints()]);
+
+            if (currentAction === 'placing_bet') {
+                setStep('flipping'); // <-- AUTOMATICALLY shows "Flip Coin"
+            } 
+            else if (currentAction === 'claiming_points') {
+                resetGame(); // <-- AUTOMATICALLY resets the game
+            } 
             else if (currentAction === 'flipping_coin') {
                 let coinFlippedEvent;
                 for (const log of receipt.logs) { try { const event = decodeEventLog({ abi: coinFlipAbi, ...log }); if (event.eventName === 'CoinFlipped') { coinFlippedEvent = event; break; } } catch {} }
+
                 if (coinFlippedEvent) {
                     const { win, resultHeads } = coinFlippedEvent.args;
-                    setLastFlipResult({ win });
                     setIsSpinning(true);
                     setTimeout(() => setCoinResult(resultHeads ? 'heads' : 'tails'), 100);
-                    setTimeout(() => { setIsSpinning(false); setHapticResult(win ? 'win' : 'lose'); setStep('finished'); }, 1200);
-                } else { toast.error("Could not determine flip result. Please refresh."); }
+                    setTimeout(() => {
+                        setIsSpinning(false);
+                        setHapticResult(win ? 'win' : 'lose');
+                        setStep('finished'); // <-- AUTOMATICALLY shows win/loss state
+                    }, 1200);
+                }
             }
-            await Promise.all([refetchCoins(), refetchActiveBet(), refetchPendingPoints()]);
-            setCurrentAction(null);
-            resetWriteContract();
+            
+            setCurrentAction(null); // The action is done.
+            resetWriteContract(); // Reset for the next transaction.
         };
         handleConfirmation();
+        return; // Exit the hook. The confirmation is the only thing that matters.
     }
-  }, [isConfirmed, receipt, currentAction, refetchCoins, refetchActiveBet, refetchPendingPoints, resetWriteContract]);
-  
-  useEffect(() => {
-    if (isConfirming || currentAction) return;
-    if (pendingPoints && pendingPoints > BigInt(0)) {
-        setStep('finished');
-    } else if (hasActiveBet) {
-        setStep('flipping');
-    } else {
-        setStep('choosing');
+
+    // Priority 2: If nothing is happening, just make sure the UI matches the blockchain.
+    if (!isConfirming && !currentAction) {
+        setHapticResult(null);
+        if (pendingPoints && pendingPoints > BigInt(0)) {
+            setStep('finished');
+        } else if (hasActiveBet) {
+            setStep('flipping');
+        } else {
+            setStep('choosing');
+        }
     }
-  }, [hasActiveBet, pendingPoints, isConfirming, currentAction]);
+  }, [isConfirmed, receipt, currentAction, hasActiveBet, pendingPoints, isConfirming, refetchCoins, refetchActiveBet, refetchPendingPoints, resetWriteContract]);
 
   const statusText = useMemo(() => {
     if (isConfirming || currentAction) return 'Waiting for on-chain confirmation...';
