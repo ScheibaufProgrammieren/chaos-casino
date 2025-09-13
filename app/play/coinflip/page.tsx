@@ -3,7 +3,7 @@
 import { useState, useMemo, useEffect } from 'react';
 import { useAccount, usePublicClient, useReadContract, useWriteContract, useWaitForTransactionReceipt } from 'wagmi';
 import { toast } from 'sonner';
-import { decodeEventLog } from 'viem';
+import { decodeEventLog, parseUnits } from 'viem';
 import { chaosCoinAbi, coinFlipAbi } from '@/lib/abi';
 
 const HUB_ADDRESS = process.env.NEXT_PUBLIC_HUB_ADDRESS as `0x${string}`;
@@ -42,49 +42,66 @@ export default function CoinFlipPage() {
     setHapticResult(null);
   };
 
-  const handleWrite = async (
-    functionName: 'placeBet' | 'flip' | 'claimPoints',
-    args: any[],
-    toastId: string | number
-  ) => {
-    // --- THIS IS THE FIX ---
-    // We check if publicClient exists BEFORE we try to use it.
-    if (!publicClient || !address) {
-        toast.error('Wallet not connected properly.', { id: toastId });
-        setCurrentAction(null);
-        return;
-    }
-
-    try {
-        const estimatedGas = await publicClient.estimateContractGas({ address: COINFLIP_ADDRESS, abi: coinFlipAbi, functionName, args, account: address });
-        const gasWithBuffer = (estimatedGas * 120n) / 100n;
-
-        toast.loading('Waiting for your confirmation...', { id: toastId });
-        await writeContractAsync({ address: COINFLIP_ADDRESS, abi: coinFlipAbi, functionName, args, gas: gasWithBuffer }); 
+  // --- THESE ARE THE NEW, BULLETPROOF FUNCTIONS ---
+  async function placeBet() {
+    if (!address || !publicClient) return toast.error('Wallet not ready.');
+    if (!hasEnoughCoins) { toast.error('You need at least 1 coin to play.'); return; }
+    
+    setCurrentAction('placing_bet');
+    setLastFlipResult(null);
+    const toastId = toast.loading('Placing your bet...');
+    
+    try { 
+        const { request } = await publicClient.simulateContract({
+            address: COINFLIP_ADDRESS,
+            abi: coinFlipAbi,
+            functionName: 'placeBet',
+            args: [guessHeads],
+            account: address
+        });
+        await writeContractAsync(request);
     } catch (e) { 
         toast.error('Transaction rejected.', { id: toastId }); 
         setCurrentAction(null); 
     }
   }
 
-  const placeBet = () => {
-    if (!hasEnoughCoins) { toast.error('You need at least 1 coin to play.'); return; }
-    setCurrentAction('placing_bet');
-    setLastFlipResult(null);
-    const toastId = toast.loading('Placing your bet...');
-    handleWrite('placeBet', [guessHeads], toastId);
-  }
-
-  const flipCoin = () => {
+  async function flipCoin() {
+    if (!address || !publicClient) return toast.error('Wallet not ready.');
     setCurrentAction('flipping_coin');
     const toastId = toast.loading('Flipping the coin...');
-    handleWrite('flip', [], toastId);
+    
+    try { 
+        const { request } = await publicClient.simulateContract({
+            address: COINFLIP_ADDRESS,
+            abi: coinFlipAbi,
+            functionName: 'flip',
+            account: address
+        });
+        await writeContractAsync(request); 
+    } catch (e) { 
+        toast.error('Transaction rejected.', { id: toastId }); 
+        setCurrentAction(null); 
+    }
   }
 
-  const claim = () => {
+  async function claim() {
+    if (!address || !publicClient) return toast.error('Wallet not ready.');
     setCurrentAction('claiming_points');
     const toastId = toast.loading('Claiming your points...');
-    handleWrite('claimPoints', [], toastId);
+    
+    try { 
+        const { request } = await publicClient.simulateContract({
+            address: COINFLIP_ADDRESS,
+            abi: coinFlipAbi,
+            functionName: 'claimPoints',
+            account: address
+        });
+        await writeContractAsync(request);
+    } catch (e) { 
+        toast.error('Transaction rejected.', { id: toastId }); 
+        setCurrentAction(null); 
+    }
   }
 
   useEffect(() => {
@@ -111,7 +128,7 @@ export default function CoinFlipPage() {
         };
         handleConfirmation();
     }
-  }, [isConfirmed, receipt, currentAction, resetWriteContract, refetchCoins, refetchActiveBet, refetchPendingPoints]);
+  }, [isConfirmed, receipt, currentAction, refetchCoins, refetchActiveBet, refetchPendingPoints, resetWriteContract]);
   
   useEffect(() => {
     if (isConfirming || currentAction) return;
