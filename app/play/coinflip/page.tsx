@@ -1,8 +1,7 @@
 'use client';
 
 import { useState, useMemo, useEffect } from 'react';
-import { useAccount } from 'wagmi';
-import { useReadContract, useWriteContract, useWaitForTransactionReceipt } from 'wagmi';
+import { useAccount, usePublicClient, useReadContract, useWriteContract, useWaitForTransactionReceipt } from 'wagmi';
 import { toast } from 'sonner';
 import { decodeEventLog } from 'viem';
 import { chaosCoinAbi, coinFlipAbi } from '@/lib/abi';
@@ -16,6 +15,7 @@ type Action = 'placing_bet' | 'flipping_coin' | 'claiming_points';
 
 export default function CoinFlipPage() {
   const { address } = useAccount();
+  const publicClient = usePublicClient(); // <-- THE GAS STATION MANAGER
   
   const [guessHeads, setGuessHeads] = useState<boolean>(true);
   const [step, setStep] = useState<Step>('choosing');
@@ -42,50 +42,71 @@ export default function CoinFlipPage() {
     setHapticResult(null);
   };
 
+  // --- THIS IS THE UPGRADED, BULLETPROOF FUNCTION ---
   async function placeBet() {
-    if (!hasEnoughCoins) { toast.error('You need at least 1 coin to play.'); return; }
+    if (!hasEnoughCoins || !address) { toast.error('You need at least 1 coin to play.'); return; }
     setCurrentAction('placing_bet');
     setLastFlipResult(null);
+    const toastId = toast.loading('Calculating transaction cost...');
     try { 
-        await writeContractAsync({ address: COINFLIP_ADDRESS, abi: coinFlipAbi, functionName: 'placeBet', args: [guessHeads] }); 
+        // 1. Estimate the gas
+        const estimatedGas = await publicClient.estimateContractGas({ address: COINFLIP_ADDRESS, abi: coinFlipAbi, functionName: 'placeBet', args: [guessHeads], account: address });
+        const gasWithBuffer = (estimatedGas * 120n) / 100n; // Add 20% safety buffer
+
+        // 2. Send the transaction with the exact gas amount
+        toast.loading('Placing your bet...', { id: toastId });
+        await writeContractAsync({ address: COINFLIP_ADDRESS, abi: coinFlipAbi, functionName: 'placeBet', args: [guessHeads], gas: gasWithBuffer }); 
     } catch (e) { 
-        toast.error('Transaction rejected.'); 
+        toast.error('Transaction rejected.', { id: toastId }); 
         setCurrentAction(null); 
     }
   }
 
+  // --- THIS IS THE UPGRADED, BULLETPROOF FUNCTION ---
   async function flipCoin() {
+    if (!address) return;
     setCurrentAction('flipping_coin');
+    const toastId = toast.loading('Calculating transaction cost...');
     try { 
-        await writeContractAsync({ address: COINFLIP_ADDRESS, abi: coinFlipAbi, functionName: 'flip', args: [] }); 
+        const estimatedGas = await publicClient.estimateContractGas({ address: COINFLIP_ADDRESS, abi: coinFlipAbi, functionName: 'flip', args: [], account: address });
+        const gasWithBuffer = (estimatedGas * 120n) / 100n;
+
+        toast.loading('Flipping the coin...', { id: toastId });
+        await writeContractAsync({ address: COINFLIP_ADDRESS, abi: coinFlipAbi, functionName: 'flip', args: [], gas: gasWithBuffer }); 
     } catch (e) { 
-        toast.error('Transaction rejected.'); 
+        toast.error('Transaction rejected.', { id: toastId }); 
         setCurrentAction(null); 
     }
   }
 
+  // --- THIS IS THE UPGRADED, BULLETPROOF FUNCTION ---
   async function claim() {
+    if (!address) return;
     setCurrentAction('claiming_points');
+    const toastId = toast.loading('Calculating transaction cost...');
     try { 
-        await writeContractAsync({ address: COINFLIP_ADDRESS, abi: coinFlipAbi, functionName: 'claimPoints', args: [] }); 
+        const estimatedGas = await publicClient.estimateContractGas({ address: COINFLIP_ADDRESS, abi: coinFlipAbi, functionName: 'claimPoints', args: [], account: address });
+        const gasWithBuffer = (estimatedGas * 120n) / 100n;
+
+        toast.loading('Claiming your points...', { id: toastId });
+        await writeContractAsync({ address: COINFLIP_ADDRESS, abi: coinFlipAbi, functionName: 'claimPoints', args: [], gas: gasWithBuffer }); 
     } catch (e) { 
-        toast.error('Transaction rejected.'); 
+        toast.error('Transaction rejected.', { id: toastId }); 
         setCurrentAction(null); 
     }
   }
 
-  // --- THIS IS THE FINAL, BULLETPROOF HOOK ---
-  // It is the one and only BOSS of the page. It controls EVERYTHING after a transaction.
   useEffect(() => {
     if (isConfirmed && receipt && currentAction) {
         const handleConfirmation = async () => {
+            toast.dismiss(); // Clear the loading toast
             toast.success('Transaction Confirmed!');
 
             if (currentAction === 'placing_bet') {
-                setStep('flipping'); // AUTOMATICALLY shows the "Flip Coin" button.
+                setStep('flipping');
             } 
             else if (currentAction === 'claiming_points') {
-                resetGame(); // AUTOMATICALLY resets to the start.
+                resetGame();
             } 
             else if (currentAction === 'flipping_coin') {
                 let coinFlippedEvent;
@@ -93,13 +114,13 @@ export default function CoinFlipPage() {
 
                 if (coinFlippedEvent) {
                     const { win, resultHeads } = coinFlippedEvent.args;
-                    setLastFlipResult({ win }); // <-- Stores the TRUTH in our memory
+                    setLastFlipResult({ win });
                     setIsSpinning(true);
                     setTimeout(() => setCoinResult(resultHeads ? 'heads' : 'tails'), 100);
                     setTimeout(() => {
                         setIsSpinning(false);
                         setHapticResult(win ? 'win' : 'lose');
-                        setStep('finished'); // AUTOMATICALLY shows the result buttons.
+                        setStep('finished');
                     }, 1200);
                 } else {
                     toast.error("Could not determine flip result. Please refresh.");
@@ -112,12 +133,10 @@ export default function CoinFlipPage() {
         };
         handleConfirmation();
     }
-  }, [isConfirmed, receipt, currentAction]);
+  }, [isConfirmed, receipt, currentAction, resetWriteContract, refetchCoins, refetchActiveBet, refetchPendingPoints]);
   
-  // This hook is ONLY for syncing the UI on page load. It DOES NOT run during a transaction.
   useEffect(() => {
     if (isConfirming || currentAction) return;
-
     if (pendingPoints && pendingPoints > BigInt(0)) {
         setStep('finished');
     } else if (hasActiveBet) {
